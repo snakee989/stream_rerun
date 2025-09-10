@@ -8,12 +8,19 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 # Set non-interactive frontend to avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add non-free and contrib repositories, and NVIDIA CUDA repository
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
+# Add non-free, contrib, and NVIDIA CUDA repositories, and install curl and gnupg
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        gnupg \
+    && echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list && \
     echo "deb [arch=amd64] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list && \
     curl -fsSL https://download.nvidia.com/debian/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list && \
+    apt-get update && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Install dependencies in a single layer
 RUN apt-get update && \
@@ -28,7 +35,6 @@ RUN apt-get update && \
         vainfo \
         libnvidia-encode1 \
         build-essential \
-        curl \
         ca-certificates \
         git \
     && apt-get clean && \
@@ -66,4 +72,4 @@ CMD ["python", "app.py"]
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
-      version="1.1"
+      version="1.2"
