@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
 # --- Intel Quick Sync Video (QSV) Setup ---
 # Add Intel's new oneAPI apt repository and key
 RUN curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
-    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keying.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
 
 # Update apt-get and install Intel Media SDK and libraries required for QSV
 # The package names have changed from the older SDK to newer components.
