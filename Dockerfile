@@ -14,8 +14,8 @@ RUN pip3 install flask
 # Set working directory
 WORKDIR /app
 
-# Copy app code
-COPY app/ /app/
+# Copy all project files into /app inside container
+COPY . /app/
 
 # Expose Flask port
 EXPOSE 8080
