@@ -34,8 +34,9 @@ RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu22
     echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | tee /etc/apt/sources.list.d/nvidia.list
 
 # Install NVIDIA libraries and CUDA toolkit for NVENC support
+# Replaced libnvidia-encode-12-2 with libnvidia-extra-535 which contains the necessary dependencies
 RUN apt-get update && apt-get install -y \
-    libnvidia-encode-12-2 \
+    libnvidia-extra-535 \
     cuda-toolkit-12-2 \
     && rm -rf /var/lib/apt/lists/*
 
