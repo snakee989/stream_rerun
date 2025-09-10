@@ -1,60 +1,42 @@
-from flask import Flask, render_template, request
-import subprocess
+from flask import Flask, render_template, request, redirect
 import os
-import signal
+import subprocess
 
 app = Flask(__name__)
 
 VIDEO_DIR = "/videos"
-stream_proc = None
+LOG_FILE = "/app/stream.log"
+default_encoder = "libx264"
 
-# Detect default GPU encoder
-def detect_gpu():
-    try:
-        subprocess.run(["nvidia-smi"], stdout=subprocess.DEVNULL)
-        return "h264_nvenc"
-    except:
-        pass
-    # Add AMD/Intel detection if desired
-    return "libx264"  # CPU fallback
+# Ensure videos folder exists
+os.makedirs(VIDEO_DIR, exist_ok=True)
 
-# List videos
 def get_videos():
-    if not os.path.exists(VIDEO_DIR):
-        os.makedirs(VIDEO_DIR)
     return [f for f in os.listdir(VIDEO_DIR) if f.lower().endswith((".mp4", ".mkv", ".mov"))]
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    global stream_proc
-    logs = ""
     videos = get_videos()
-    default_encoder = detect_gpu()
+    logs = []
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, "r") as f:
+            logs = f.readlines()[-50:]  # last 50 lines
 
     if request.method == "POST":
-        action = request.form.get("action")
-        encoder = request.form.get("encoder") or default_encoder
-        input_type = request.form.get("input_type")
-
-        if input_type == "file":
-            video_name = request.form.get("video")
-            input_file = os.path.join(VIDEO_DIR, video_name)
-        else:
-            input_file = request.form.get("srt_url")  # SRT/RTMP link
-
+        video_name = request.form.get("video_name")
+        srt_url = request.form.get("srt_url")
         stream_key = request.form.get("stream_key")
+        encoder = request.form.get("encoder") or default_encoder
 
-        if action == "start":
-            loop_cmd = " -stream_loop -1 " if input_type == "file" else " "
-            ffmpeg_cmd = f"ffmpeg -re {loop_cmd}-i {input_file} -c:v {encoder} -preset fast -c:a aac -b:a 128k -f flv {stream_key}"
-            print("Running:", ffmpeg_cmd)
-            stream_proc = subprocess.Popen(ffmpeg_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, preexec_fn=os.setsid)
-            logs = f"Streaming started using encoder: {encoder}..."
+        if video_name:
+            video_path = os.path.join(VIDEO_DIR, video_name)
+            cmd = f"ffmpeg -re -i '{video_path}' -c:v {encoder} -f flv '{stream_key}'"
+            subprocess.Popen(cmd, shell=True)
+        elif srt_url:
+            cmd = f"ffmpeg -re -i '{srt_url}' -c:v {encoder} -f flv '{stream_key}'"
+            subprocess.Popen(cmd, shell=True)
 
-        elif action == "stop" and stream_proc:
-            os.killpg(os.getpgid(stream_proc.pid), signal.SIGTERM)
-            stream_proc = None
-            logs = "Streaming stopped."
+        return redirect("/")
 
     return render_template("index.html", videos=videos, logs=logs, default_encoder=default_encoder)
 
