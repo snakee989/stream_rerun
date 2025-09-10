@@ -1,66 +1,68 @@
-from flask import Flask, render_template_string, request, send_file
 import os
+import subprocess
+from flask import Flask, request, render_template
 
-app = Flask(__name__)
+# Flask will look for templates in the same folder as app.py
+app = Flask(__name__, template_folder='.')
 
-# Folder where your videos are stored
-VIDEO_FOLDER = "./videos"
-videos = [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")]
+DEFAULT_ENCODER = "libx264"
+ffmpeg_process = None
 
-# Default video
-current_video = videos[0] if videos else None
-
-# HTML template as a string (all in one file)
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Video Switcher</title>
-    <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; }
-        select, button { padding: 10px; margin: 10px; font-size: 16px; }
-        video { margin-top: 20px; max-width: 90%; border: 2px solid #fff; }
-    </style>
-</head>
-<body>
-    <h1>Dynamic Video Switcher</h1>
-    <form method="POST">
-        <select name="video">
-            {% for v in videos %}
-            <option value="{{ v }}" {% if v == current_video %}selected{% endif %}>{{ v }}</option>
-            {% endfor %}
-        </select>
-        <button type="submit">Switch Video</button>
-    </form>
-
-    {% if current_video %}
-    <video controls autoplay>
-        <source src="/video" type="video/mp4">
-        Your browser does not support the video tag.
-    </video>
-    {% else %}
-    <p>No video found!</p>
-    {% endif %}
-</body>
-</html>
-"""
+# Ensure videos folder exists
+VIDEO_FOLDER = "videos"
+os.makedirs(VIDEO_FOLDER, exist_ok=True)
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    global current_video
-    if request.method == "POST":
-        selected = request.form.get("video")
-        if selected in videos:
-            current_video = selected
-    return render_template_string(HTML_TEMPLATE, videos=videos, current_video=current_video)
+    global ffmpeg_process
+    logs = ""
 
-@app.route("/video")
-def video():
-    if current_video:
-        return send_file(os.path.join(VIDEO_FOLDER, current_video))
-    return "No video selected", 404
+    # List all mp4 videos
+    videos = [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")]
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        input_type = request.form.get("input_type")
+        encoder = request.form.get("encoder")
+        output_url = request.form.get("stream_key")
+
+        # Stop streaming
+        if action == "stop":
+            if ffmpeg_process and ffmpeg_process.poll() is None:
+                ffmpeg_process.terminate()
+                ffmpeg_process = None
+                logs = "Stream stopped."
+            return render_template("index.html", videos=videos, logs=logs, default_encoder=encoder)
+
+        # Start streaming
+        if action == "start":
+            if input_type == "file":
+                video_file = request.form.get("video")
+                input_path = os.path.join(VIDEO_FOLDER, video_file)
+            else:
+                input_path = request.form.get("srt_url")
+
+            # Stop previous stream if running
+            if ffmpeg_process and ffmpeg_process.poll() is None:
+                ffmpeg_process.terminate()
+
+            cmd = [
+                "ffmpeg",
+                "-re",
+                "-i", input_path,
+                "-c:v", encoder,
+                "-preset", "fast",
+                "-c:a", "aac",
+                "-f", "flv",
+                output_url
+            ]
+            try:
+                ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                logs = f"Streaming started: {input_path} -> {output_url}"
+            except Exception as e:
+                logs = f"Error: {e}"
+
+    return render_template("index.html", videos=videos, logs=logs, default_encoder=DEFAULT_ENCODER)
 
 if __name__ == "__main__":
-    os.makedirs(VIDEO_FOLDER, exist_ok=True)
     app.run(host="0.0.0.0", port=8080)
