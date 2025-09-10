@@ -1,5 +1,5 @@
-# Use Debian 12 slim as the base image for compatibility with NVIDIA and Intel drivers
-FROM debian:12-slim
+# Use Debian 12 (Bookworm) as the base image for better compatibility with NVIDIA and Intel drivers
+FROM debian:12
 
 # Set environment variables for NVIDIA GPU support
 ENV NVIDIA_VISIBLE_DEVICES=all \
@@ -8,22 +8,22 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 # Set non-interactive frontend to avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add non-free, contrib, and NVIDIA CUDA repositories, and install curl, gnupg, and ca-certificates
+# Add non-free, contrib, and NVIDIA CUDA repositories, and install prerequisites
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
         gnupg \
-        ca-certificates \
-    && echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb [arch=amd64] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list && \
-    curl -fsSL https://download.nvidia.com/debian/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list && \
+        ca-certificates && \
+    echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+    curl -s -L https://nvidia.github.io/libnvidia-container/debian12/amd64/libnvidia-container.list | \
+        sed 's|deb |deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] |' >> /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
     apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Install dependencies in a single layer
+# Install dependencies for NVIDIA and Intel iGPU support
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 \
@@ -72,4 +72,4 @@ CMD ["python", "app.py"]
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
-      version="1.3"
+      version="1.4"
