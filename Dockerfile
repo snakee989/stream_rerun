@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y \
 
 # --- Compile FFmpeg with both Intel oneVPL and NVIDIA NVENC support ---
 WORKDIR /usr/src
-RUN git clone https://github.com/FFmpeg/FFmpeg.git -b release/5.1 --depth 1
+RUN git clone https://github.com/FFmpeg/FFmpeg.git --depth 1
 WORKDIR /usr/src/FFmpeg
 
 # Configure and compile FFmpeg with all necessary hardware acceleration flags
