@@ -21,6 +21,7 @@
       <h2 class="text-xl font-semibold mb-4">Select Video or Input</h2>
       <form method="POST" action="/start" class="space-y-4">
 
+        <!-- Input type -->
         <div>
           <label for="input_type" class="block mb-2 font-medium">Input Type</label>
           <select id="input_type" name="input_type" class="w-full p-2 rounded bg-gray-700 text-gray-100">
@@ -43,7 +44,14 @@
         <!-- Stream URL field -->
         <div id="url_input_div" class="hidden">
           <label for="stream_url" class="block mb-2 font-medium">Stream URL</label>
-          <input type="text" id="stream_url" name="stream_url" placeholder="Enter SRT/RTMP URL"
+          <input type="text" id="stream_url" name="stream_url" placeholder="rtmp://live.twitch.tv/app"
+                 class="w-full p-2 rounded bg-gray-700 text-gray-100">
+        </div>
+
+        <!-- Stream Key field -->
+        <div id="key_input_div" class="hidden">
+          <label for="stream_key" class="block mb-2 font-medium">Stream Key</label>
+          <input type="text" id="stream_key" name="stream_key" placeholder="your-stream-key"
                  class="w-full p-2 rounded bg-gray-700 text-gray-100">
         </div>
 
@@ -87,16 +95,22 @@
     const inputType = document.getElementById("input_type");
     const fileInputDiv = document.getElementById("file_input_div");
     const urlInputDiv = document.getElementById("url_input_div");
+    const keyInputDiv = document.getElementById("key_input_div");
 
-    inputType.addEventListener("change", () => {
+    function toggleInputs() {
       if (inputType.value === "file") {
         fileInputDiv.classList.remove("hidden");
         urlInputDiv.classList.add("hidden");
+        keyInputDiv.classList.add("hidden");
       } else {
         fileInputDiv.classList.add("hidden");
         urlInputDiv.classList.remove("hidden");
+        keyInputDiv.classList.remove("hidden");
       }
-    });
+    }
+
+    inputType.addEventListener("change", toggleInputs);
+    toggleInputs(); // Run on page load
   </script>
 </body>
 </html>
