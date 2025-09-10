@@ -8,11 +8,12 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 # Set non-interactive frontend to avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add non-free, contrib, and NVIDIA CUDA repositories, and install curl and gnupg
+# Add non-free, contrib, and NVIDIA CUDA repositories, and install curl, gnupg, and ca-certificates
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
         gnupg \
+        ca-certificates \
     && echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list && \
     echo "deb [arch=amd64] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list && \
@@ -35,7 +36,6 @@ RUN apt-get update && \
         vainfo \
         libnvidia-encode1 \
         build-essential \
-        ca-certificates \
         git \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
@@ -72,4 +72,4 @@ CMD ["python", "app.py"]
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
-      version="1.2"
+      version="1.3"
