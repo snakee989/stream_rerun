@@ -77,6 +77,11 @@ HTML = """<!DOCTYPE html>
             </select>
         </div>
 
+        <div class="mb-3">
+            <label for="preset" class="form-label">Encoder Preset</label>
+            <select class="form-select" id="preset" name="preset"></select>
+        </div>
+
         <div class="d-flex justify-content-between">
             <button type="submit" name="action" value="start" class="btn btn-start">Start Stream</button>
             <button type="submit" name="action" value="stop" class="btn btn-stop">Stop Stream</button>
@@ -108,6 +113,38 @@ document.addEventListener("DOMContentLoaded", function() {
 
     inputType.addEventListener("change", toggleInputs);
     toggleInputs();
+
+    const encoderSelect = document.getElementById("encoder");
+    const presetSelect = document.getElementById("preset");
+
+    const presets = {
+        "libx264": ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"],
+        "h264_nvenc": ["slow", "medium", "fast", "hp", "hq", "bd", "ll", "llhp", "llhq"],
+        "h264_qsv": ["veryfast", "faster", "fast", "medium", "slow"],
+        "h264_amf": ["veryfast", "faster", "fast", "medium", "slow"]
+    };
+
+    function updatePresets() {
+        const selectedEncoder = encoderSelect.value;
+        const availablePresets = presets[selectedEncoder] || [];
+
+        // Clear existing options
+        presetSelect.innerHTML = '';
+
+        // Add new options
+        availablePresets.forEach(p => {
+            const option = document.createElement("option");
+            option.value = p;
+            option.text = p;
+            if (p === "veryfast" || p === "medium") { // Set a sane default for the user
+                option.selected = true;
+            }
+            presetSelect.appendChild(option);
+        });
+    }
+
+    encoderSelect.addEventListener("change", updatePresets);
+    updatePresets(); // Initialize on page load
 });
 </script>
 </body>
@@ -126,6 +163,7 @@ def index():
         stream_key = request.form.get("stream_key") or last_stream_key
         input_type = request.form.get("input_type")
         encoder = request.form.get("encoder", DEFAULT_ENCODER)
+        preset = request.form.get("preset", "veryfast")
         video = request.form.get("video")
         srt_url = request.form.get("srt_url")
         bitrate = request.form.get("bitrate") or DEFAULT_BITRATE
@@ -154,7 +192,7 @@ def index():
                     cmd = [
                         "ffmpeg", "-re", "-stream_loop", "-1", "-i", input_path,
                         "-c:v", encoder,
-                        "-preset", "veryfast",
+                        "-preset", preset,
                         "-b:v", bitrate,
                         "-maxrate", bitrate,
                         "-bufsize", str(int(bitrate.replace('k',''))*2) + "k",
@@ -168,7 +206,7 @@ def index():
                     cmd = [
                         "ffmpeg", "-re", "-i", srt_url,
                         "-c:v", encoder,
-                        "-preset", "veryfast",
+                        "-preset", preset,
                         "-b:v", bitrate,
                         "-maxrate", bitrate,
                         "-bufsize", str(int(bitrate.replace('k',''))*2) + "k",
@@ -189,4 +227,3 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
