@@ -60,14 +60,11 @@ RUN ./configure \
     --enable-libx265 \
     --enable-libvpx \
     --enable-nonfree \
-    --enable-libmfx \
     --enable-libvpl \
     --enable-cuda \
     --enable-cuvid \
     --enable-nvenc \
-    --extra-libs=-lpthread \
-    --extra-cflags="-I/usr/include/mfx" \
-    --extra-ldflags="-L/usr/lib/x86_64-linux-gnu -lmfx"
+    --extra-libs=-lpthread
 
 RUN make -j$(nproc)
 RUN make install
