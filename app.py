@@ -6,10 +6,11 @@ app = Flask(__name__)
 
 VIDEO_FOLDER = "./videos"
 DEFAULT_ENCODER = "libx264"
+DEFAULT_BITRATE = "2500k"
 ffmpeg_process = None
-last_stream_key = None  # Store last used stream key
+last_stream_key = None
+last_bitrate = DEFAULT_BITRATE
 
-# Ensure videos folder exists
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 
 HTML = """<!DOCTYPE html>
@@ -37,6 +38,11 @@ HTML = """<!DOCTYPE html>
         <div class="mb-3">
             <label for="stream_key" class="form-label">Stream Key / Output URL</label>
             <input type="text" class="form-control" id="stream_key" name="stream_key" placeholder="Twitch/YouTube RTMP or custom SRT link" value="{{ last_stream_key }}">
+        </div>
+
+        <div class="mb-3">
+            <label for="bitrate" class="form-label">Video Bitrate (e.g., 2500k)</label>
+            <input type="text" class="form-control" id="bitrate" name="bitrate" value="{{ last_bitrate }}">
         </div>
 
         <div class="mb-3">
@@ -112,7 +118,7 @@ def list_videos():
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    global ffmpeg_process, last_stream_key
+    global ffmpeg_process, last_stream_key, last_bitrate
     logs = ""
 
     if request.method == "POST":
@@ -122,6 +128,8 @@ def index():
         encoder = request.form.get("encoder", DEFAULT_ENCODER)
         video = request.form.get("video")
         srt_url = request.form.get("srt_url")
+        bitrate = request.form.get("bitrate") or DEFAULT_BITRATE
+        last_bitrate = bitrate
 
         if action == "stop":
             if ffmpeg_process and ffmpeg_process.poll() is None:
@@ -137,9 +145,9 @@ def index():
             else:
                 if not stream_key:
                     logs = "Stream key required to start."
-                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key)
+                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key, last_bitrate=last_bitrate)
 
-                last_stream_key = stream_key  # Save last used stream key
+                last_stream_key = stream_key
 
                 if input_type == "file":
                     input_path = os.path.join(VIDEO_FOLDER, video)
@@ -147,9 +155,9 @@ def index():
                         "ffmpeg", "-re", "-stream_loop", "-1", "-i", input_path,
                         "-c:v", encoder,
                         "-preset", "veryfast",
-                        "-b:v", "2500k",
-                        "-maxrate", "2500k",
-                        "-bufsize", "5000k",
+                        "-b:v", bitrate,
+                        "-maxrate", bitrate,
+                        "-bufsize", str(int(bitrate.replace('k',''))*2) + "k",
                         "-pix_fmt", "yuv420p",
                         "-g", "50",
                         "-c:a", "copy",
@@ -161,9 +169,9 @@ def index():
                         "ffmpeg", "-re", "-i", srt_url,
                         "-c:v", encoder,
                         "-preset", "veryfast",
-                        "-b:v", "2500k",
-                        "-maxrate", "2500k",
-                        "-bufsize", "5000k",
+                        "-b:v", bitrate,
+                        "-maxrate", bitrate,
+                        "-bufsize", str(int(bitrate.replace('k',''))*2) + "k",
                         "-pix_fmt", "yuv420p",
                         "-g", "50",
                         "-c:a", "copy",
@@ -172,12 +180,12 @@ def index():
                     ]
                 else:
                     logs = "Invalid input."
-                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key)
+                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key, last_bitrate=last_bitrate)
 
                 ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                logs = f"Streaming started: {video if input_type=='file' else srt_url}"
+                logs = f"Streaming started: {video if input_type=='file' else srt_url} at {bitrate}"
 
-    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key)
+    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key, last_bitrate=last_bitrate)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
