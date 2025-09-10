@@ -39,10 +39,12 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/nvidia-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | tee /etc/apt/sources.list.d/nvidia.list
 
-# Install the full CUDA toolkit and encoding libraries
+# Install only the necessary NVIDIA libraries, not the full CUDA toolkit
 RUN apt-get update && apt-get install -y \
     libnvidia-encode-535 \
-    cuda-toolkit-12-2 \
+    libnvidia-decode-535 \
+    libnvidia-fbc-535 \
+    libcuda1 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Compile FFmpeg with both Intel oneVPL and NVIDIA NVENC support ---
