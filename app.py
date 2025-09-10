@@ -1,44 +1,66 @@
-from flask import Flask, render_template, request, redirect
+from flask import Flask, render_template_string, request, send_file
 import os
-import subprocess
 
 app = Flask(__name__)
 
-VIDEO_DIR = "/videos"
-LOG_FILE = "/app/stream.log"
-default_encoder = "libx264"
+# Folder where your videos are stored
+VIDEO_FOLDER = "./videos"
+videos = [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")]
 
-# Ensure videos folder exists
-os.makedirs(VIDEO_DIR, exist_ok=True)
+# Default video
+current_video = videos[0] if videos else None
 
-def get_videos():
-    return [f for f in os.listdir(VIDEO_DIR) if f.lower().endswith((".mp4", ".mkv", ".mov"))]
+# HTML template as a string (all in one file)
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video Switcher</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; }
+        select, button { padding: 10px; margin: 10px; font-size: 16px; }
+        video { margin-top: 20px; max-width: 90%; border: 2px solid #fff; }
+    </style>
+</head>
+<body>
+    <h1>Dynamic Video Switcher</h1>
+    <form method="POST">
+        <select name="video">
+            {% for v in videos %}
+            <option value="{{ v }}" {% if v == current_video %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Switch Video</button>
+    </form>
+
+    {% if current_video %}
+    <video controls autoplay>
+        <source src="/video" type="video/mp4">
+        Your browser does not support the video tag.
+    </video>
+    {% else %}
+    <p>No video found!</p>
+    {% endif %}
+</body>
+</html>
+"""
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    videos = get_videos()
-    logs = []
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, "r") as f:
-            logs = f.readlines()[-50:]  # last 50 lines
-
+    global current_video
     if request.method == "POST":
-        video_name = request.form.get("video_name")
-        srt_url = request.form.get("srt_url")
-        stream_key = request.form.get("stream_key")
-        encoder = request.form.get("encoder") or default_encoder
+        selected = request.form.get("video")
+        if selected in videos:
+            current_video = selected
+    return render_template_string(HTML_TEMPLATE, videos=videos, current_video=current_video)
 
-        if video_name:
-            video_path = os.path.join(VIDEO_DIR, video_name)
-            cmd = f"ffmpeg -re -i '{video_path}' -c:v {encoder} -f flv '{stream_key}'"
-            subprocess.Popen(cmd, shell=True)
-        elif srt_url:
-            cmd = f"ffmpeg -re -i '{srt_url}' -c:v {encoder} -f flv '{stream_key}'"
-            subprocess.Popen(cmd, shell=True)
-
-        return redirect("/")
-
-    return render_template("index.html", videos=videos, logs=logs, default_encoder=default_encoder)
+@app.route("/video")
+def video():
+    if current_video:
+        return send_file(os.path.join(VIDEO_FOLDER, current_video))
+    return "No video selected", 404
 
 if __name__ == "__main__":
+    os.makedirs(VIDEO_FOLDER, exist_ok=True)
     app.run(host="0.0.0.0", port=8080)
