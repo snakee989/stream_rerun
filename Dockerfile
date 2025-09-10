@@ -15,14 +15,18 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# === Intel Quick Sync Video (QSV) Setup ===
-# Install Intel Media SDK and libraries required for QSV
+# --- Intel Quick Sync Video (QSV) Setup ---
+# Add Intel's Media SDK apt repository
+RUN curl -fsSL https://dgpu-docs.intel.com/apt/intel-gpg-key.asc | gpg --dearmor -o /usr/share/keyrings/intel-media.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/intel-media.gpg] https://apt.repos.intel.com/media all main" | tee /etc/apt/sources.list.d/intel-media.list
+
+# Update apt-get and install Intel Media SDK and libraries required for QSV
 RUN apt-get update && apt-get install -y \
     libmfx-dev \
     intel-media-sdk \
     && rm -rf /var/lib/apt/lists/*
 
-# === NVIDIA NVENC Setup ===
+# --- NVIDIA NVENC Setup ---
 # Add NVIDIA package repository
 RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/nvidia-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | tee /etc/apt/sources.list.d/nvidia.list
