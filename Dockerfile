@@ -30,9 +30,19 @@ RUN curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-P
 RUN apt-get update && apt-get install -y \
     libmfx-dev \
     intel-media-va-driver-non-free \
-    libvpl-dev \
     libmfx1 \
+    libva-dev \
+    libdrm-dev \
+    meson \
     && rm -rf /var/lib/apt/lists/*
+
+# Compile and install oneVPL from source
+WORKDIR /usr/src
+RUN git clone https://github.com/oneapi-src/oneVPL.git --depth 1
+WORKDIR /usr/src/oneVPL
+RUN meson setup --prefix=/usr/local --libdir=lib/x86_64-linux-gnu build && \
+    meson compile -C build && \
+    meson install -C build
 
 # --- NVIDIA NVENC Setup ---
 # Add NVIDIA package repository
