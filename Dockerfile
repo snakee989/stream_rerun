@@ -48,8 +48,11 @@ RUN apt-get update && \
         curl \
         gnupg \
         ca-certificates && \
-    # Add non-free, contrib, and non-free-firmware repositories
-    sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list && \
+    # --- FIX STARTS HERE ---
+    # Create the sources.list file directly since debian:slim doesn't have it by default
+    echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    # --- FIX ENDS HERE ---
     # Add NVIDIA container toolkit repository
     curl -fsSL https://nvidia.github.io/nvidia-container-toolkit/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/nvidia-container-toolkit/debian12/amd64/ /" > /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
@@ -69,7 +72,7 @@ RUN apt-get update && \
     # Clean up to reduce image size
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group for better security
 RUN groupadd --system --gid 1001 appgroup && \
@@ -103,7 +106,7 @@ VOLUME /app/videos
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
-      version="1.5"
+      version="1.6"
 
 # Run the application
 CMD ["python", "app.py"]
