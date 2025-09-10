@@ -1,46 +1,102 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Rerun 24/7</title>
-    <style>
-        body { font-family: Arial, sans-serif; background: #1e1e1e; color: #eee; }
-        .container { max-width: 600px; margin: 50px auto; }
-        input, select, button { width: 100%; padding: 10px; margin: 5px 0; border-radius: 5px; border: none; }
-        button { background: #4CAF50; color: white; cursor: pointer; }
-        button:hover { background: #45a049; }
-        textarea { width: 100%; height: 200px; margin-top: 10px; background: #111; color: #0f0; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FFmpeg Streamer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-<div class="container">
-    <h1>FFmpeg Stream UI</h1>
-    <form method="POST">
-        <label>Stream Key / URL:</label>
-        <input type="text" name="stream_key" placeholder="rtmp://server/live/stream_key" required>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col">
 
-        <label>Choose video:</label>
-        <select name="video_name">
-            <option value="">--Select Video--</option>
+  <!-- Header -->
+  <header class="bg-gray-800 shadow-lg p-4">
+    <h1 class="text-2xl font-bold text-center">🎥 FFmpeg Streamer Dashboard</h1>
+  </header>
+
+  <!-- Main container -->
+  <main class="flex-1 container mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- Video Selection -->
+    <section class="bg-gray-800 rounded-2xl shadow-lg p-6">
+      <h2 class="text-xl font-semibold mb-4">Select Video or Input</h2>
+      <form method="POST" action="/start" class="space-y-4">
+
+        <div>
+          <label for="input_type" class="block mb-2 font-medium">Input Type</label>
+          <select id="input_type" name="input_type" class="w-full p-2 rounded bg-gray-700 text-gray-100">
+            <option value="file">📁 Local File</option>
+            <option value="srt">🌐 SRT Stream</option>
+            <option value="rtmp">📡 RTMP Stream</option>
+          </select>
+        </div>
+
+        <!-- Video file dropdown -->
+        <div id="file_input_div">
+          <label for="video" class="block mb-2 font-medium">Choose Video</label>
+          <select id="video" name="video" class="w-full p-2 rounded bg-gray-700 text-gray-100">
             {% for video in videos %}
-                <option value="{{ video }}">{{ video }}</option>
+              <option value="{{ video }}">{{ video }}</option>
             {% endfor %}
-        </select>
+          </select>
+        </div>
 
-        <label>Or SRT / RTMP URL:</label>
-        <input type="text" name="srt_url" placeholder="srt://... or rtmp://...">
+        <!-- Stream URL field -->
+        <div id="url_input_div" class="hidden">
+          <label for="stream_url" class="block mb-2 font-medium">Stream URL</label>
+          <input type="text" id="stream_url" name="stream_url" placeholder="Enter SRT/RTMP URL"
+                 class="w-full p-2 rounded bg-gray-700 text-gray-100">
+        </div>
 
-        <label>Encoder (optional):</label>
-        <input type="text" name="encoder" placeholder="libx264 or h264_nvenc" value="{{ default_encoder }}">
+        <!-- Encoder -->
+        <div>
+          <label for="encoder" class="block mb-2 font-medium">Encoder</label>
+          <select id="encoder" name="encoder" class="w-full p-2 rounded bg-gray-700 text-gray-100">
+            <option value="libx264" {% if default_encoder == "libx264" %}selected{% endif %}>CPU (libx264)</option>
+            <option value="h264_nvenc" {% if default_encoder == "h264_nvenc" %}selected{% endif %}>NVIDIA GPU (h264_nvenc)</option>
+            <option value="h264_amf" {% if default_encoder == "h264_amf" %}selected{% endif %}>AMD GPU (h264_amf)</option>
+            <option value="h264_qsv" {% if default_encoder == "h264_qsv" %}selected{% endif %}>Intel iGPU (h264_qsv)</option>
+          </select>
+        </div>
 
-        <button type="submit">Start Stream</button>
-    </form>
+        <button type="submit"
+          class="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold">
+          🚀 Start Stream
+        </button>
+      </form>
+    </section>
 
-    <h3>Logs (last 50 lines)</h3>
-    <textarea readonly>
-{% for line in logs %}
-{{ line }}
-{% endfor %}
-    </textarea>
-</div>
+    <!-- Logs -->
+    <section class="bg-gray-800 rounded-2xl shadow-lg p-6">
+      <h2 class="text-xl font-semibold mb-4">Logs</h2>
+      <div class="bg-black rounded-lg p-4 h-96 overflow-y-scroll text-sm font-mono">
+        {% for line in logs %}
+          <p>{{ line }}</p>
+        {% endfor %}
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-gray-800 text-center p-4">
+    <p class="text-sm text-gray-400">FFmpeg UI &copy; 2025</p>
+  </footer>
+
+  <!-- Script for dynamic input switching -->
+  <script>
+    const inputType = document.getElementById("input_type");
+    const fileInputDiv = document.getElementById("file_input_div");
+    const urlInputDiv = document.getElementById("url_input_div");
+
+    inputType.addEventListener("change", () => {
+      if (inputType.value === "file") {
+        fileInputDiv.classList.remove("hidden");
+        urlInputDiv.classList.add("hidden");
+      } else {
+        fileInputDiv.classList.add("hidden");
+        urlInputDiv.classList.remove("hidden");
+      }
+    });
+  </script>
 </body>
 </html>
