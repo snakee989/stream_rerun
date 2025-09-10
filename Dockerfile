@@ -1,37 +1,38 @@
-# Use Alpine-based Python for small size
-FROM python:3.10-alpine
+# Use slim Python base
+FROM python:3.12-slim
 
-# Set working directory
+# Enable NVIDIA runtime if using GPU
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,video,utility
+
+# Install system dependencies for FFmpeg + VA-API + NVENC
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libva2 \
+        vainfo \
+        libnvidia-encode1 \
+        build-essential \
+        curl \
+        ca-certificates \
+        git \
+        && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    bash \
-    ffmpeg \
-    tini \
-    libstdc++ \
-    && adduser -D appuser
+# Copy app files
+COPY app.py /app/
 
-# Copy Python dependencies first for caching
-COPY requirements.txt .
+# Copy videos folder (optional, user can mount host folder)
+RUN mkdir -p /app/videos
 
 # Install Python dependencies
+COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy entire app (all in same folder)
-COPY . .
-
-# Make sure templates are accessible
-# All files (app.py, index.html, etc.) are in /app
-
-# Switch to non-root user
-USER appuser
-
-# Expose Flask port
+# Expose port
 EXPOSE 8080
 
-# Use tini as PID 1 to handle signals correctly
-ENTRYPOINT ["/sbin/tini", "--"]
-
-# Run Flask app
+# Run the app
 CMD ["python", "app.py"]
