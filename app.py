@@ -7,12 +7,12 @@ app = Flask(__name__)
 VIDEO_FOLDER = "./videos"
 DEFAULT_ENCODER = "libx264"
 ffmpeg_process = None
+last_stream_key = None  # Store last used stream key
 
 # Ensure videos folder exists
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 
-HTML = """
-<!DOCTYPE html>
+HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -36,7 +36,7 @@ HTML = """
     <form method="POST">
         <div class="mb-3">
             <label for="stream_key" class="form-label">Stream Key / Output URL</label>
-            <input type="text" class="form-control" id="stream_key" name="stream_key" placeholder="Twitch/YouTube RTMP or custom SRT link" required>
+            <input type="text" class="form-control" id="stream_key" name="stream_key" placeholder="Twitch/YouTube RTMP or custom SRT link" value="{{ last_stream_key }}">
         </div>
 
         <div class="mb-3">
@@ -101,24 +101,23 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     inputType.addEventListener("change", toggleInputs);
-    toggleInputs(); // initial call
+    toggleInputs();
 });
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 def list_videos():
     return [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")]
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    global ffmpeg_process
+    global ffmpeg_process, last_stream_key
     logs = ""
 
     if request.method == "POST":
         action = request.form.get("action")
-        stream_key = request.form.get("stream_key")
+        stream_key = request.form.get("stream_key") or last_stream_key
         input_type = request.form.get("input_type")
         encoder = request.form.get("encoder", DEFAULT_ENCODER)
         video = request.form.get("video")
@@ -128,7 +127,7 @@ def index():
             if ffmpeg_process and ffmpeg_process.poll() is None:
                 ffmpeg_process.terminate()
                 ffmpeg_process = None
-                logs = "Stream stopped."
+                logs = f"Stream stopped ({last_stream_key})"
             else:
                 logs = "No stream running."
 
@@ -136,6 +135,12 @@ def index():
             if ffmpeg_process and ffmpeg_process.poll() is None:
                 logs = "Stream already running."
             else:
+                if not stream_key:
+                    logs = "Stream key required to start."
+                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key)
+
+                last_stream_key = stream_key  # Save last used stream key
+
                 if input_type == "file":
                     input_path = os.path.join(VIDEO_FOLDER, video)
                     cmd = [
@@ -167,12 +172,12 @@ def index():
                     ]
                 else:
                     logs = "Invalid input."
-                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER)
+                    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key)
 
                 ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 logs = f"Streaming started: {video if input_type=='file' else srt_url}"
 
-    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER)
+    return render_template_string(HTML, videos=list_videos(), logs=logs, default_encoder=DEFAULT_ENCODER, last_stream_key=last_stream_key)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
