@@ -21,9 +21,11 @@ RUN curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-P
     echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
 
 # Update apt-get and install Intel Media SDK and libraries required for QSV
+# The package names have changed from the older SDK to newer components.
 RUN apt-get update && apt-get install -y \
     libmfx-dev \
-    intel-media-sdk \
+    intel-media-va-driver-non-free \
+    libmfx1 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- NVIDIA NVENC Setup ---
