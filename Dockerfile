@@ -39,9 +39,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Your application-specific instructions go here
-# For example, to copy your Python application
+# Install Python packages required for a long-running web server
+RUN pip3 install flask gunicorn
+
 WORKDIR /app
 COPY . /app
 
-# The command to run your application
-CMD ["python3", "app.py"]
+# Expose the port your application will listen on
+EXPOSE 5000
+
+# The command to run your application using gunicorn for a production-ready server
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
