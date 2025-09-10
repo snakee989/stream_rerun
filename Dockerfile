@@ -1,74 +1,109 @@
-# Use Debian 12 (Bookworm) as the base image for compatibility with NVIDIA and Intel drivers
-FROM debian:12
-
-# Set environment variables for NVIDIA GPU support
-ENV NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+# =========================================================================
+# Stage 1: Build Stage
+# This stage installs build tools and Python dependencies in a virtual env.
+# =========================================================================
+FROM debian:12-slim AS builder
 
 # Set non-interactive frontend to avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add non-free, contrib, non-free-firmware, and NVIDIA repositories, and install prerequisites
+# Install build dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        python3-pip \
+        python3-venv \
+        git \
+        build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create a virtual environment
+RUN python3 -m venv /opt/venv
+
+# Activate the virtual environment for subsequent commands
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies, leveraging build cache
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+# =========================================================================
+# Stage 2: Final Stage
+# This stage builds the final, lean image with only runtime dependencies.
+# =========================================================================
+FROM debian:12-slim
+
+# Set environment variables for NVIDIA GPU support at runtime
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+
+# Set non-interactive frontend
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies in a single layer for efficiency
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        # Repo management
         curl \
         gnupg \
         ca-certificates && \
-    echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    # Add non-free, contrib, and non-free-firmware repositories
+    sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list && \
+    # Add NVIDIA container toolkit repository
     curl -fsSL https://nvidia.github.io/nvidia-container-toolkit/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/nvidia-container-toolkit/debian12/amd64/ /" > /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
+    # Update sources and install runtime dependencies
     apt-get update && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-
-# Install dependencies for NVIDIA and Intel iGPU support
-RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 \
-        python3-pip \
         ffmpeg \
+        # Intel VA-API dependencies
         libva-drm2 \
         libva-x11-2 \
         libva-dev \
         intel-media-va-driver-non-free \
         vainfo \
-        libnvidia-encode1 \
-        build-essential \
-        git \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+        # NVIDIA NVENC dependency
+        libnvidia-encode1 && \
+    # Clean up to reduce image size
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-# Link python3 to python for convenience
-RUN ln -sf /usr/bin/python3 /usr/bin/python
+# Create a non-root user and group for better security
+RUN groupadd --system --gid 1001 appgroup && \
+    useradd --system --uid 1001 --gid 1001 appuser
 
 # Set working directory
 WORKDIR /app
 
-# Create videos directory
-RUN mkdir -p /app/videos
+# Copy the virtual environment from the builder stage
+COPY --from=builder /opt/venv /opt/venv
 
-# Copy application files
-COPY app.py requirements.txt /app/
+# Copy application code and set ownership
+COPY --chown=appuser:appgroup app.py .
 
-# Install Python dependencies and clean up pip cache
-RUN pip install --no-cache-dir -r requirements.txt && \
-    rm -rf /root/.cache/pip
+# Activate the virtual environment for the final container
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Switch to the non-root user
+USER appuser
 
 # Expose port for the application
 EXPOSE 8080
 
-# Add health check to verify application is running
+# Add health check to verify the application is running
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# Define volume for video storage
+# Define volume for video storage. This directory will be created automatically.
 VOLUME /app/videos
-
-# Run the application
-CMD ["python", "app.py"]
 
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
       version="1.5"
+
+# Run the application
+CMD ["python", "app.py"]
