@@ -1,24 +1,22 @@
-# Base image
-FROM ubuntu:22.04
+# Use Python 3.10 slim image
+FROM python:3.10-slim
 
-# Install dependencies
+# Install ffmpeg (CPU version) and other dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    python3 \
-    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Flask
-RUN pip3 install flask
-
-# Set working directory
+# Set workdir
 WORKDIR /app
 
-# Copy all project files into /app inside container
-COPY . /app/
+# Copy application
+COPY . /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose Flask port
 EXPOSE 8080
 
-# Start Flask app
-CMD ["python3", "app.py"]
+# Run the app
+CMD ["python", "app.py"]
