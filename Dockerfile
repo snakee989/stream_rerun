@@ -43,8 +43,7 @@ RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu22
 RUN apt-get update && apt-get install -y \
     libnvidia-encode-535 \
     libnvidia-decode-535 \
-    libnvidia-fbc-535 \
-    libcuda1 \
+    libnvidia-compute-535 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Compile FFmpeg with both Intel oneVPL and NVIDIA NVENC support ---
