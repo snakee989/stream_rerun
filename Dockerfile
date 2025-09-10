@@ -1,4 +1,4 @@
-# Use Debian 12 (Bookworm) as the base image for better compatibility with NVIDIA and Intel drivers
+# Use Debian 12 (Bookworm) as the base image for compatibility with NVIDIA and Intel drivers
 FROM debian:12
 
 # Set environment variables for NVIDIA GPU support
@@ -8,7 +8,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 # Set non-interactive frontend to avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add non-free, contrib, and NVIDIA CUDA repositories, and install prerequisites
+# Add non-free, contrib, non-free-firmware, and NVIDIA repositories, and install prerequisites
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
@@ -16,9 +16,8 @@ RUN apt-get update && \
         ca-certificates && \
     echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
-    curl -s -L https://nvidia.github.io/libnvidia-container/debian12/amd64/libnvidia-container.list | \
-        sed 's|deb |deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] |' >> /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
+    curl -fsSL https://nvidia.github.io/nvidia-container-toolkit/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/nvidia-container-toolkit/debian12/amd64/ /" > /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
     apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
@@ -72,4 +71,4 @@ CMD ["python", "app.py"]
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
-      version="1.4"
+      version="1.5"
