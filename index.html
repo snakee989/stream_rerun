@@ -1,116 +1,41 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FFmpeg Streamer</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <title>Rerun 24/7 </title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #1e1e2f; color: #fff; }
+        .container { max-width: 600px; margin-top: 50px; }
+        .card { background: #2e2e4e; padding: 20px; border-radius: 15px; }
+        .btn-primary { background: #ff5c57; border: none; }
+        .btn-primary:hover { background: #ff2a1a; }
+        input, file { margin-bottom: 10px; }
+    </style>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col">
+<body>
+    <div class="container">
+        <div class="card shadow">
+            <h2 class="mb-4 text-center">FFmpeg Streamer</h2>
 
-  <!-- Header -->
-  <header class="bg-gray-800 shadow-lg p-4">
-    <h1 class="text-2xl font-bold text-center">🎥 FFmpeg Streamer Dashboard</h1>
-  </header>
+            {% if message %}
+                <div class="alert alert-info">{{ message }}</div>
+            {% endif %}
 
-  <!-- Main container -->
-  <main class="flex-1 container mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <form method="POST" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="stream_key" class="form-label">Stream Key</label>
+                    <input type="text" class="form-control" id="stream_key" name="stream_key" placeholder="Enter your stream key" required>
+                </div>
 
-    <!-- Video Selection -->
-    <section class="bg-gray-800 rounded-2xl shadow-lg p-6">
-      <h2 class="text-xl font-semibold mb-4">Select Video or Input</h2>
-      <form method="POST" action="/start" class="space-y-4">
+                <div class="mb-3">
+                    <label for="video_file" class="form-label">Video File</label>
+                    <input type="file" class="form-control" id="video_file" name="video_file" accept="video/*" required>
+                </div>
 
-        <!-- Input type -->
-        <div>
-          <label for="input_type" class="block mb-2 font-medium">Input Type</label>
-          <select id="input_type" name="input_type" class="w-full p-2 rounded bg-gray-700 text-gray-100">
-            <option value="file">📁 Local File</option>
-            <option value="srt">🌐 SRT Stream</option>
-            <option value="rtmp">📡 RTMP Stream</option>
-          </select>
+                <button type="submit" class="btn btn-primary w-100">Start Streaming</button>
+            </form>
         </div>
-
-        <!-- Video file dropdown -->
-        <div id="file_input_div">
-          <label for="video" class="block mb-2 font-medium">Choose Video</label>
-          <select id="video" name="video" class="w-full p-2 rounded bg-gray-700 text-gray-100">
-            {% for video in videos %}
-              <option value="{{ video }}">{{ video }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <!-- Stream URL field -->
-        <div id="url_input_div" class="hidden">
-          <label for="stream_url" class="block mb-2 font-medium">Stream URL</label>
-          <input type="text" id="stream_url" name="stream_url" placeholder="rtmp://live.twitch.tv/app"
-                 class="w-full p-2 rounded bg-gray-700 text-gray-100">
-        </div>
-
-        <!-- Stream Key field -->
-        <div id="key_input_div" class="hidden">
-          <label for="stream_key" class="block mb-2 font-medium">Stream Key</label>
-          <input type="text" id="stream_key" name="stream_key" placeholder="your-stream-key"
-                 class="w-full p-2 rounded bg-gray-700 text-gray-100">
-        </div>
-
-        <!-- Encoder -->
-        <div>
-          <label for="encoder" class="block mb-2 font-medium">Encoder</label>
-          <select id="encoder" name="encoder" class="w-full p-2 rounded bg-gray-700 text-gray-100">
-            <option value="libx264" {% if default_encoder == "libx264" %}selected{% endif %}>CPU (libx264)</option>
-            <option value="h264_nvenc" {% if default_encoder == "h264_nvenc" %}selected{% endif %}>NVIDIA GPU (h264_nvenc)</option>
-            <option value="h264_amf" {% if default_encoder == "h264_amf" %}selected{% endif %}>AMD GPU (h264_amf)</option>
-            <option value="h264_qsv" {% if default_encoder == "h264_qsv" %}selected{% endif %}>Intel iGPU (h264_qsv)</option>
-          </select>
-        </div>
-
-        <button type="submit"
-          class="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold">
-          🚀 Start Stream
-        </button>
-      </form>
-    </section>
-
-    <!-- Logs -->
-    <section class="bg-gray-800 rounded-2xl shadow-lg p-6">
-      <h2 class="text-xl font-semibold mb-4">Logs</h2>
-      <div class="bg-black rounded-lg p-4 h-96 overflow-y-scroll text-sm font-mono">
-        {% for line in logs %}
-          <p>{{ line }}</p>
-        {% endfor %}
-      </div>
-    </section>
-
-  </main>
-
-  <!-- Footer -->
-  <footer class="bg-gray-800 text-center p-4">
-    <p class="text-sm text-gray-400">FFmpeg UI &copy; 2025</p>
-  </footer>
-
-  <!-- Script for dynamic input switching -->
-  <script>
-    const inputType = document.getElementById("input_type");
-    const fileInputDiv = document.getElementById("file_input_div");
-    const urlInputDiv = document.getElementById("url_input_div");
-    const keyInputDiv = document.getElementById("key_input_div");
-
-    function toggleInputs() {
-      if (inputType.value === "file") {
-        fileInputDiv.classList.remove("hidden");
-        urlInputDiv.classList.add("hidden");
-        keyInputDiv.classList.add("hidden");
-      } else {
-        fileInputDiv.classList.add("hidden");
-        urlInputDiv.classList.remove("hidden");
-        keyInputDiv.classList.remove("hidden");
-      }
-    }
-
-    inputType.addEventListener("change", toggleInputs);
-    toggleInputs(); // Run on page load
-  </script>
+    </div>
 </body>
 </html>
