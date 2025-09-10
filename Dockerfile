@@ -1,16 +1,18 @@
-# Use slim Python base
-FROM python:3.12-slim
+# Use Debian 12 slim
+FROM debian:12-slim
 
-# Enable NVIDIA runtime if using GPU
+# Set environment variables for NVIDIA GPU
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,video,utility
 
-# Install system dependencies for FFmpeg + VA-API + NVENC
+# Install basic dependencies + FFmpeg + VA-API + NVENC
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
         ffmpeg \
-        libva2 \
         vainfo \
+        libva2 \
         libnvidia-encode1 \
         build-essential \
         curl \
@@ -18,20 +20,23 @@ RUN apt-get update && \
         git \
         && rm -rf /var/lib/apt/lists/*
 
+# Set Python command
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
 # Create app directory
 WORKDIR /app
 
 # Copy app files
 COPY app.py /app/
+COPY requirements.txt /app/
 
-# Copy videos folder (optional, user can mount host folder)
+# Create videos folder
 RUN mkdir -p /app/videos
 
 # Install Python dependencies
-COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port
+# Expose the port
 EXPOSE 8080
 
 # Run the app
