@@ -8,23 +8,29 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
 # Set non-interactive frontend to avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies in a single layer to reduce image size
-# Includes Python, FFmpeg, Intel VA-API drivers, NVIDIA encoding libraries, and build tools
+# Add non-free and contrib repositories, and NVIDIA CUDA repository
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb [arch=amd64] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list && \
+    curl -fsSL https://download.nvidia.com/debian/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://download.nvidia.com/debian bookworm non-free" >> /etc/apt/sources.list.d/nvidia.list
+
+# Install dependencies in a single layer
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3=3.11.2-6 \
-        python3-pip=23.0.1+dfsg-1 \
-        ffmpeg=7:5.1.6-0+deb12u1 \
-        libva-drm2=2.14.0-1 \
-        libva-x11-2=2.14.0-1 \
-        libva-dev=2.14.0-1 \
-        intel-media-va-driver-non-free=23.1.1+dfsg1-1 \
-        vainfo=2.14.0-1 \
-        libnvidia-encode1=525.147.05-7~deb12u1 \
-        build-essential=12.9 \
-        curl=7.88.1-10+deb12u7 \
-        ca-certificates=20230311 \
-        git=1:2.39.2-1.1 \
+        python3 \
+        python3-pip \
+        ffmpeg \
+        libva-drm2 \
+        libva-x11-2 \
+        libva-dev \
+        intel-media-va-driver-non-free \
+        vainfo \
+        libnvidia-encode1 \
+        build-essential \
+        curl \
+        ca-certificates \
+        git \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
@@ -60,4 +66,4 @@ CMD ["python", "app.py"]
 # Metadata
 LABEL maintainer="Your Name <your.email@example.com>" \
       description="Docker image for video processing with NVIDIA GPU (NVENC) and Intel iGPU (VA-API) support" \
-      version="1.0"
+      version="1.1"
