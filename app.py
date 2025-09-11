@@ -33,14 +33,12 @@ def list_videos():
     return sorted(vids)
 
 def parse_bitrate_k(bitrate):
-    # "2500k" -> 2500, otherwise None
     if bitrate.endswith("k") and bitrate[:-1].isdigit():
         return int(bitrate[:-1])
     return None
 
 def build_cmd(input_args, encoder, preset, bitrate, out_url):
-    # Common rate control (CBR triad + timed keyframes every 2s)
-    # Keep a 2x buffer and force timed keyframes for Twitch; use GOP=120 as a general 2s@60fps default.
+    # Force timed keyframes every 2s for Twitch; keep a 2x buffer and a 2s GOP default [21][22]
     bk = parse_bitrate_k(bitrate)
     buf = f"{bk*2}k" if bk else bitrate
     common_rc = [
@@ -50,10 +48,9 @@ def build_cmd(input_args, encoder, preset, bitrate, out_url):
         "-g", "120",
         "-force_key_frames", "expr:gte(t,n_forced*2)"
     ]
-    # Safer timestamps for long runs
-    common_ts = ["-fflags", "+genpts"]
+    common_ts = ["-fflags", "+genpts"]  # stable timestamps for long runs [23]
 
-    # Audio: always re-encode to AAC 48 kHz stereo for streaming compatibility
+    # Always normalize audio for live ingest compatibility [21]
     audio = ["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
 
     pre = []
@@ -61,21 +58,17 @@ def build_cmd(input_args, encoder, preset, bitrate, out_url):
     vcodec = []
 
     if encoder == "h264_nvenc":
-        # NVENC CBR + preset map; keep yuv420p for player compatibility
-        vcodec = ["-c:v", "h264_nvenc", "-preset", preset, "-rc", "cbr", "-pix_fmt", "yuv420p"]
+        vcodec = ["-c:v", "h264_nvenc", "-preset", preset, "-rc", "cbr", "-pix_fmt", "yuv420p"]  # CBR path [24]
     elif encoder == "h264_qsv":
-        # QSV via oneVPL with NV12 upload
         pre = ["-init_hw_device", "qsv=hw:/dev/dri/renderD128", "-filter_hw_device", "hw"]
         vf = ["-vf", "format=nv12,hwupload=extra_hw_frames=64"]
-        vcodec = ["-c:v", "h264_qsv", "-preset", preset, "-look_ahead", "0"]
+        vcodec = ["-c:v", "h264_qsv", "-preset", preset, "-look_ahead", "0"]  # steady bitrate [25]
     elif encoder == "h264_vaapi":
-        # VAAPI with NV12 upload; modest B-frames for quality
         pre = ["-vaapi_device", "/dev/dri/renderD128"]
         vf = ["-vf", "format=nv12,hwupload"]
-        vcodec = ["-c:v", "h264_vaapi", "-bf", "2"]
+        vcodec = ["-c:v", "h264_vaapi", "-bf", "2"]  # moderate B-frames [24]
     else:
-        # CPU x264
-        vcodec = ["-c:v", "libx264", "-preset", preset, "-pix_fmt", "yuv420p"]
+        vcodec = ["-c:v", "libx264", "-preset", preset, "-pix_fmt", "yuv420p"]  # CPU x264 [24]
 
     return ["ffmpeg", "-loglevel", "verbose"] + pre + input_args + vcodec + common_rc + vf + audio + common_ts + ["-f", "flv", out_url]
 
@@ -92,14 +85,12 @@ def start_supervised(cmd):
                 bufsize=1,
                 universal_newlines=True
             )
-            # Read logs
             for line in ffmpeg_process.stdout:
                 log_buffer.append(line.rstrip("\n"))
             rc = ffmpeg_process.wait()
             state["running"] = False
             if stop_requested:
                 break
-            # Auto-restart with backoff
             state["restarts"] += 1
             log_buffer.append(f"[supervisor] ffmpeg exited (code={rc}), restarting in {backoff}s")
             time.sleep(backoff)
@@ -112,67 +103,60 @@ def start_supervised(cmd):
             time.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET"])
 def index():
+    form = {k: DEFAULTS[k] for k in DEFAULTS}
+    return render_template("index.html", videos=list_videos(), logs="", form=form)
+
+@app.route("/toggle", methods=["POST"])
+def toggle():
     global ffmpeg_process, ffmpeg_thread, last_cmd, stop_requested
-    form = {k: request.form.get(k, DEFAULTS[k]) for k in DEFAULTS}
-    logs = ""
-
-    if request.method == "POST":
-        action = request.form.get("action")
-        if action == "stop":
-            stop_requested = True
-            if ffmpeg_process and ffmpeg_process.poll() is None:
+    # If running -> stop; else -> start using posted form fields [12]
+    if state["running"]:
+        stop_requested = True
+        if ffmpeg_process and ffmpeg_process.poll() is None:
+            try:
+                ffmpeg_process.terminate()
+                ffmpeg_process.wait(timeout=3)
+            except Exception:
                 try:
-                    ffmpeg_process.terminate()
-                    ffmpeg_process.wait(timeout=3)
+                    ffmpeg_process.kill()
                 except Exception:
-                    try:
-                        ffmpeg_process.kill()
-                    except Exception:
-                        pass
-            logs = f"Stop requested ({form.get('stream_key') or 'no key'})"
-        elif action == "start":
-            if state["running"]:
-                logs = "Stream already running."
-            else:
-                # Validate output URL
-                if not form["stream_key"]:
-                    logs = "Stream key / output URL is required."
-                    return render_template("index.html", videos=list_videos(), logs=logs, form=form)
-                # Build input
-                if form["input_type"] == "file":
-                    if not form["video"]:
-                        vids = list_videos()
-                        form["video"] = vids if vids else ""
-                    input_path = os.path.join(VIDEO_FOLDER, form["video"])
-                    # Use -re for file pacing and loop
-                    input_args = ["-re", "-stream_loop", "-1", "-i", input_path]
-                elif form["input_type"] == "srt":
-                    if not form["srt_url"]:
-                        logs = "SRT / RTMP input URL is required."
-                        return render_template("index.html", videos=list_videos(), logs=logs, form=form)
-                    # Add general reconnect-ish options only helpful for some protocols
-                    input_args = ["-re", "-rw_timeout", "15000000", "-i", form["srt_url"]]
-                else:
-                    logs = "Invalid input type."
-                    return render_template("index.html", videos=list_videos(), logs=logs, form=form)
+                    pass
+        return jsonify({"running": False, "message": "Stop requested."})
+    # Not running -> start with current form data [12]
+    form = {k: request.form.get(k, DEFAULTS[k]) for k in DEFAULTS}
+    if not form["stream_key"]:
+        return jsonify({"running": False, "error": "Stream key / output URL is required."}), 400
+    if form["input_type"] == "file":
+        if not form["video"]:
+            vids = list_videos()
+            form["video"] = vids if vids else ""
+        input_path = os.path.join(VIDEO_FOLDER, form["video"])
+        input_args = ["-re", "-stream_loop", "-1", "-i", input_path]
+    elif form["input_type"] == "srt":
+        if not form["srt_url"]:
+            return jsonify({"running": False, "error": "SRT / RTMP input URL is required."}), 400
+        # Use a conservative read timeout; reconnect is supervised outside [26]
+        input_args = ["-re", "-rw_timeout", "15000000", "-i", form["srt_url"]]
+    else:
+        return jsonify({"running": False, "error": "Invalid input type."}), 400
 
-                cmd = build_cmd(
-                    input_args=input_args,
-                    encoder=form["encoder"],
-                    preset=form["preset"],
-                    bitrate=form["bitrate"],
-                    out_url=form["stream_key"]
-                )
-                last_cmd = cmd
-                stop_requested = False
-                # Start supervisor thread
-                ffmpeg_thread = threading.Thread(target=start_supervised, args=(cmd,), daemon=True)
-                ffmpeg_thread.start()
-                logs = f"Start requested: {form['video'] if form['input_type']=='file' else form['srt_url']} @ {form['bitrate']} ({form['encoder']}, preset {form['preset']})"
-
-    return render_template("index.html", videos=list_videos(), logs=logs, form=form)
+    cmd = build_cmd(
+        input_args=input_args,
+        encoder=form["encoder"],
+        preset=form["preset"],
+        bitrate=form["bitrate"],
+        out_url=form["stream_key"]
+    )
+    last_cmd = cmd
+    stop_requested = False
+    ffmpeg_thread = threading.Thread(target=start_supervised, args=(cmd,), daemon=True)
+    ffmpeg_thread.start()
+    return jsonify({
+        "running": True,
+        "message": f"Start requested: {form['video'] if form['input_type']=='file' else form['srt_url']} @ {form['bitrate']} ({form['encoder']}, preset {form['preset']})"
+    })
 
 @app.route("/status")
 def status():
@@ -180,7 +164,6 @@ def status():
 
 @app.route("/logs")
 def logs():
-    # Return latest 200 lines
     tail = list(log_buffer)[-200:]
     return jsonify({"lines": tail})
 
