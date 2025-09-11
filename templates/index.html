@@ -12,7 +12,7 @@
   .form-label { font-weight: 600; }
   .hint { font-size: .85rem; color: #9aa0a6; }
   .btn-start { background-color: #1a7f37; color: #fff; }
-  .btn-stop { background-color: #c0353a; color: #fff; }
+  .btn-stop  { background-color: #c0353a; color: #fff; }
   select, input { background-color: #1f2327; color: #e6e8ea; border: 1px solid #2c3136; }
   .logs { background-color: #111417; border: 1px solid #2c3136; padding: 10px; height: 220px; overflow-y: auto; border-radius: 8px; margin-top: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
   .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-left: 8px; }
@@ -26,7 +26,8 @@
     <h1 class="m-0">Rerun 24/7 <span id="status-dot" class="dot offline" title="Status"></span></h1>
     <span class="hint">GPU: NVIDIA (NVENC) • Intel (VAAPI/QSV)</span>
   </div>
-  <form method="POST" class="mt-2">
+
+  <form id="form" class="mt-2">
     <div class="row g-3">
       <div class="col-12">
         <label for="stream_key" class="form-label">Stream Key / Output URL</label>
@@ -76,23 +77,25 @@
       </div>
     </div>
     <div class="d-flex gap-2 mt-3">
-      <button type="submit" name="action" value="start" class="btn btn-start">Start Stream</button>
-      <button type="submit" name="action" value="stop"  class="btn btn-stop">Stop Stream</button>
+      <button id="toggle-btn" type="button" class="btn btn-start">Start Stream</button>
     </div>
   </form>
+
   <div class="logs mt-3" id="logs">{{ logs }}</div>
 </div>
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-  const inputType   = document.getElementById("input_type");
-  const videoDiv    = document.getElementById("video-div");
-  const srtDiv      = document.getElementById("srt-div");
-  const encoder     = document.getElementById("encoder");
-  const preset      = document.getElementById("preset");
-  const presetHelp  = document.getElementById("preset-help");
-  const statusDot   = document.getElementById("status-dot");
-  const logsEl      = document.getElementById("logs");
+  const form       = document.getElementById("form");
+  const inputType  = document.getElementById("input_type");
+  const videoDiv   = document.getElementById("video-div");
+  const srtDiv     = document.getElementById("srt-div");
+  const encoder    = document.getElementById("encoder");
+  const preset     = document.getElementById("preset");
+  const presetHelp = document.getElementById("preset-help");
+  const statusDot  = document.getElementById("status-dot");
+  const logsEl     = document.getElementById("logs");
+  const toggleBtn  = document.getElementById("toggle-btn");
   const currentPreset = "{{ form.preset }}";
 
   function toggleInputs() {
@@ -119,36 +122,21 @@ document.addEventListener("DOMContentLoaded", function() {
       "placebo":"Placebo"
     },
     "h264_nvenc": {
-      "p1":"P1 (fastest, lowest quality)",
-      "p2":"P2 (faster)",
-      "p3":"P3 (fast)",
-      "p4":"P4 (medium, default)",
-      "p5":"P5 (slow, good quality)",
-      "p6":"P6 (slower, better quality)",
-      "p7":"P7 (slowest, best quality)",
-      "ll":"Low latency",
-      "llhp":"Low latency (high perf)",
-      "llhq":"Low latency (high quality)",
-      "hp":"High performance",
-      "hq":"High quality",
-      "bd":"Blu-ray compatible",
-      "lossless":"Lossless",
-      "losslesshp":"Lossless (high perf)"
+      "p1":"P1 (fastest, lowest quality)","p2":"P2","p3":"P3","p4":"P4 (default)",
+      "p5":"P5","p6":"P6","p7":"P7","ll":"Low latency","llhp":"LL High Perf","llhq":"LL High Quality",
+      "hp":"High Perf","hq":"High Quality","bd":"Blu-ray","lossless":"Lossless","losslesshp":"Lossless HP"
     },
-    "h264_qsv": { "veryfast":"Very fast", "faster":"Faster", "fast":"Fast", "medium":"Medium", "slow":"Slow" },
+    "h264_qsv": { "veryfast":"Very fast","faster":"Faster","fast":"Fast","medium":"Medium","slow":"Slow" },
     "h264_vaapi": { "medium":"Medium" }
   };
   const DEFAULT_FOR_ENCODER = {
-    "libx264":"medium",
-    "h264_nvenc":"p4",
-    "h264_qsv":"medium",
-    "h264_vaapi":"medium"
+    "libx264":"medium","h264_nvenc":"p4","h264_qsv":"medium","h264_vaapi":"medium"
   };
   const PRESET_HELP = {
     "libx264":"CPU presets trade speed vs quality; slower = better compression.",
-    "h264_nvenc":"p1..p7 are speed→quality; ll modes for latency.",
+    "h264_nvenc":"p1..p7 are speed→quality; ll* for latency.",
     "h264_qsv":"Quick Sync presets trade speed vs quality.",
-    "h264_vaapi":"VAAPI preset support varies; bitrate matters most."
+    "h264_vaapi":"Preset support varies; bitrate dominates."
   };
 
   function populatePresets() {
@@ -173,10 +161,16 @@ document.addEventListener("DOMContentLoaded", function() {
         statusDot.classList.remove("offline");
         statusDot.classList.add("online");
         statusDot.title = "Streaming";
+        toggleBtn.textContent = "Stop Stream";
+        toggleBtn.classList.remove("btn-start");
+        toggleBtn.classList.add("btn-stop");
       } else {
         statusDot.classList.remove("online");
         statusDot.classList.add("offline");
         statusDot.title = "Stopped";
+        toggleBtn.textContent = "Start Stream";
+        toggleBtn.classList.remove("btn-stop");
+        toggleBtn.classList.add("btn-start");
       }
     } catch (e) {}
   }
@@ -189,6 +183,26 @@ document.addEventListener("DOMContentLoaded", function() {
       logsEl.scrollTop = logsEl.scrollHeight;
     } catch (e) {}
   }
+
+  toggleBtn.addEventListener("click", async function() {
+    try {
+      toggleBtn.disabled = true;
+      const fd = new FormData(form);
+      const r = await fetch("/toggle", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        logsEl.textContent = (j && j.error) ? j.error : "Failed to toggle.";
+      } else {
+        logsEl.textContent = (j.message || "") + "\n" + logsEl.textContent;
+      }
+      await pollStatus();
+      await pollLogs();
+    } catch (e) {
+      // no-op
+    } finally {
+      toggleBtn.disabled = false;
+    }
+  });
 
   encoder.addEventListener("change", populatePresets);
   inputType.addEventListener("change", toggleInputs);
