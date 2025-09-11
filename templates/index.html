@@ -14,16 +14,18 @@
   .btn-start { background-color: #1a7f37; color: #fff; }
   .btn-stop { background-color: #c0353a; color: #fff; }
   select, input { background-color: #1f2327; color: #e6e8ea; border: 1px solid #2c3136; }
-  .logs { background-color: #111417; border: 1px solid #2c3136; padding: 10px; height: 160px; overflow-y: auto; border-radius: 8px; margin-top: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+  .logs { background-color: #111417; border: 1px solid #2c3136; padding: 10px; height: 220px; overflow-y: auto; border-radius: 8px; margin-top: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-left: 8px; }
+  .dot.online { background-color: #1a7f37; box-shadow: 0 0 8px rgba(26,127,55,.8); }
+  .dot.offline { background-color: #555b61; }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="m-0">Rerun 24/7</h1>
+    <h1 class="m-0">Rerun 24/7 <span id="status-dot" class="dot offline" title="Status"></span></h1>
     <span class="hint">GPU: NVIDIA (NVENC) • Intel (VAAPI/QSV)</span>
   </div>
-
   <form method="POST" class="mt-2">
     <div class="row g-3">
       <div class="col-12">
@@ -33,13 +35,11 @@
                value="{{ form.stream_key }}">
         <div class="hint mt-1">Examples: rtmp://live.twitch.tv/app/KEY or srt://host:port?streamid=…</div>
       </div>
-
       <div class="col-md-4">
         <label for="bitrate" class="form-label">Video Bitrate</label>
         <input type="text" class="form-control" id="bitrate" name="bitrate"
                placeholder="2500k" value="{{ form.bitrate }}">
       </div>
-
       <div class="col-md-4">
         <label for="input_type" class="form-label">Input Type</label>
         <select class="form-select" id="input_type" name="input_type">
@@ -47,7 +47,6 @@
           <option value="srt"  {% if form.input_type=='srt' %}selected{% endif %}>SRT / RTMP URL</option>
         </select>
       </div>
-
       <div class="col-md-4">
         <label for="encoder" class="form-label">Video Encoder</label>
         <select class="form-select" id="encoder" name="encoder">
@@ -58,7 +57,6 @@
         </select>
         <div class="hint mt-1" id="preset-help"></div>
       </div>
-
       <div class="col-md-8" id="video-div">
         <label for="video" class="form-label">Select Video</label>
         <select class="form-select" id="video" name="video">
@@ -67,26 +65,22 @@
           {% endfor %}
         </select>
       </div>
-
       <div class="col-md-8" id="srt-div">
         <label for="srt_url" class="form-label">SRT / RTMP URL</label>
         <input type="text" class="form-control" id="srt_url" name="srt_url"
                placeholder="srt://host:port?streamid=..." value="{{ form.srt_url }}">
       </div>
-
       <div class="col-md-4">
         <label for="preset" class="form-label">Encoder Preset</label>
         <select class="form-select" id="preset" name="preset"></select>
       </div>
     </div>
-
     <div class="d-flex gap-2 mt-3">
       <button type="submit" name="action" value="start" class="btn btn-start">Start Stream</button>
       <button type="submit" name="action" value="stop"  class="btn btn-stop">Stop Stream</button>
     </div>
   </form>
-
-  <div class="logs mt-3">{{ logs }}</div>
+  <div class="logs mt-3" id="logs">{{ logs }}</div>
 </div>
 
 <script>
@@ -97,6 +91,8 @@ document.addEventListener("DOMContentLoaded", function() {
   const encoder     = document.getElementById("encoder");
   const preset      = document.getElementById("preset");
   const presetHelp  = document.getElementById("preset-help");
+  const statusDot   = document.getElementById("status-dot");
+  const logsEl      = document.getElementById("logs");
   const currentPreset = "{{ form.preset }}";
 
   function toggleInputs() {
@@ -139,30 +135,20 @@ document.addEventListener("DOMContentLoaded", function() {
       "lossless":"Lossless",
       "losslesshp":"Lossless (high perf)"
     },
-    "h264_qsv": {
-      "veryfast":"Very fast",
-      "faster":"Faster",
-      "fast":"Fast",
-      "medium":"Medium",
-      "slow":"Slow"
-    },
-    "h264_vaapi": {
-      "medium":"Medium"
-    }
+    "h264_qsv": { "veryfast":"Very fast", "faster":"Faster", "fast":"Fast", "medium":"Medium", "slow":"Slow" },
+    "h264_vaapi": { "medium":"Medium" }
   };
-
   const DEFAULT_FOR_ENCODER = {
     "libx264":"medium",
     "h264_nvenc":"p4",
     "h264_qsv":"medium",
     "h264_vaapi":"medium"
   };
-
   const PRESET_HELP = {
     "libx264":"CPU presets trade speed vs quality; slower = better compression.",
-    "h264_nvenc":"p1..p7 are speed→quality; ll/llhp/llhq are low-latency modes; hq/hp/bd are legacy modes; lossless for no quality loss.",
+    "h264_nvenc":"p1..p7 are speed→quality; ll modes for latency.",
     "h264_qsv":"Quick Sync presets trade speed vs quality.",
-    "h264_vaapi":"VAAPI often ignores presets; quality depends on bitrate and driver."
+    "h264_vaapi":"VAAPI preset support varies; bitrate matters most."
   };
 
   function populatePresets() {
@@ -174,18 +160,46 @@ document.addEventListener("DOMContentLoaded", function() {
       opt.value = val; opt.text = label;
       preset.appendChild(opt);
     });
-    const want = currentPreset && options[currentPreset] ? currentPreset : (DEFAULT_FOR_ENCODER[enc] || "medium");
+    const want = (options[currentPreset] ? currentPreset : (DEFAULT_FOR_ENCODER[enc] || "medium"));
     preset.value = want;
     presetHelp.textContent = PRESET_HELP[enc] || "";
   }
 
+  async function pollStatus() {
+    try {
+      const r = await fetch("/status");
+      const j = await r.json();
+      if (j.running) {
+        statusDot.classList.remove("offline");
+        statusDot.classList.add("online");
+        statusDot.title = "Streaming";
+      } else {
+        statusDot.classList.remove("online");
+        statusDot.classList.add("offline");
+        statusDot.title = "Stopped";
+      }
+    } catch (e) {}
+  }
+
+  async function pollLogs() {
+    try {
+      const r = await fetch("/logs");
+      const j = await r.json();
+      logsEl.textContent = (j.lines || []).join("\n");
+      logsEl.scrollTop = logsEl.scrollHeight;
+    } catch (e) {}
+  }
+
   encoder.addEventListener("change", populatePresets);
   inputType.addEventListener("change", toggleInputs);
-
   toggleInputs();
   populatePresets();
+
+  setInterval(pollStatus, 2000);
+  setInterval(pollLogs, 2000);
+  pollStatus();
+  pollLogs();
 });
 </script>
 </body>
 </html>
-
