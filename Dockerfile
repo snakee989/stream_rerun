@@ -1,36 +1,50 @@
-# ---------- build stage ----------
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS build
+# CUDA dev base on Ubuntu 22.04
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Core build deps and codec dev headers (build-only)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg wget \
-    build-essential pkg-config git cmake libtool automake \
-    nasm yasm \
-    libx264-dev libx265-dev libvpx-dev \
+# Core build deps + codec/dev libs for FFmpeg and VAAPI/VPL
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    git \
+    build-essential \
+    cmake \
+    libtool \
+    nasm \
+    yasm \
+    pkg-config \
+    ca-certificates \
+    curl \
+    gnupg \
+    libx264-dev \
+    libx265-dev \
+    libvpx-dev \
+    libva-dev \
     libdrm-dev \
-  && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# Intel GPU repo (jammy) for newer oneVPL/libva headers (fixes libvpl>=2.6 and QSV init)
-RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
-    | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
+# Add Intel Graphics (GPU) repo for jammy and install oneVPL dev
+# This repo provides newer libvpl-dev (>= 2.6) required by FFmpeg --enable-libvpl
+RUN apt-get update && apt-get install -y wget gpg-agent && rm -rf /var/lib/apt/lists/* && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
       > /etc/apt/sources.list.d/intel-gpu-jammy.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update && apt-get install -y \
       libvpl-dev \
       intel-media-va-driver-non-free \
-      libva-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src
 
-# NVENC headers (required for --enable-nvenc)
+# Install NVIDIA Video Codec headers (required for --enable-nvenc)
 RUN git clone https://github.com/FFmpeg/nv-codec-headers.git --depth 1 && \
-    make -C nv-codec-headers install && rm -rf nv-codec-headers
+    cd nv-codec-headers && make install && cd .. && rm -rf nv-codec-headers
 
-# FFmpeg build (NVENC + NVDEC + oneVPL/QSV + VAAPI)
+# Get FFmpeg source
 RUN git clone https://github.com/FFmpeg/FFmpeg.git --depth 1
 WORKDIR /usr/src/FFmpeg
+
+# Configure FFmpeg with NVIDIA + Intel (oneVPL) support
 RUN ./configure \
     --prefix=/usr/local \
     --enable-shared \
@@ -38,39 +52,20 @@ RUN ./configure \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libvpx \
-    --enable-vaapi \
-    --enable-libvpl \
     --enable-nonfree \
+    --enable-libvpl \
+    --extra-cflags='-I/usr/local/cuda/include' \
+    --extra-ldflags='-L/usr/local/cuda/lib64' \
     --enable-cuda \
     --enable-nvenc \
     --enable-nvdec \
-    --extra-cflags='-I/usr/local/cuda/include' \
-    --extra-ldflags='-L/usr/local/cuda/lib64' \
-    --extra-libs='-lpthread -lm' && \
-    make -j"$(nproc)" && make install && ldconfig
+    --extra-libs='-lpthread -lm'
 
-# ---------- runtime stage ----------
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
-ENV DEBIAN_FRONTEND=noninteractive
+RUN make -j"$(nproc)" && make install && ldconfig
 
-# Add Intel GPU repo (runtime) and install VA-API media driver + minimal runtimes
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg wget \
-  && rm -rf /var/lib/apt/lists/* && \
-    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
-    | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
-      > /etc/apt/sources.list.d/intel-gpu-jammy.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
-      intel-media-va-driver-non-free \
-      libva2 libdrm2 \
-      libx264-163 libx265-199 libvpx7 \
-      python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# FFmpeg from build stage
-COPY --from=build /usr/local /usr/local
-RUN ldconfig && pip3 install --no-cache-dir flask gunicorn
+# Python runtime and web server
+RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
+RUN pip3 install flask gunicorn
 
 WORKDIR /app
 COPY . /app
