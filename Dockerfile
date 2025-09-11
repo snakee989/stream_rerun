@@ -1,67 +1,36 @@
-# Use a base image with a recent version of Ubuntu
-FROM ubuntu:22.04
-
-# Set environment variables to enable non-interactive apt-get
+# ---------- build stage ----------
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install core build dependencies
-RUN apt-get update && apt-get install -y \
-    software-properties-common \
-    git \
-    build-essential \
-    cmake \
-    libtool \
-    nasm \
-    yasm \
-    libx264-dev \
-    libx265-dev \
-    libvpx-dev \
-    ca-certificates \
-    curl \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
-# --- Intel oneAPI (libvpl) Setup ---
-# Add Intel's new oneAPI apt repository and key
-RUN curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
-    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
-
-# Update and install Intel Media SDK libraries required for oneVPL
-RUN apt-get update && apt-get install -y \
-    libmfx-dev \
-    intel-media-va-driver-non-free \
-    libmfx1 \
-    libva-dev \
+# Core build deps and codec dev headers (build-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg wget \
+    build-essential pkg-config git cmake libtool automake \
+    nasm yasm \
+    libx264-dev libx265-dev libvpx-dev \
     libdrm-dev \
-    meson \
+  && rm -rf /var/lib/apt/lists/*
+
+# Intel GPU repo (jammy) for newer oneVPL/libva headers (fixes libvpl>=2.6 and QSV init)
+RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
+    | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
+      > /etc/apt/sources.list.d/intel-gpu-jammy.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+      libvpl-dev \
+      intel-media-va-driver-non-free \
+      libva-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Compile and install oneVPL from source
 WORKDIR /usr/src
-RUN git clone https://github.com/oneapi-src/oneVPL.git --depth 1
-WORKDIR /usr/src/oneVPL
-RUN meson setup --prefix=/usr/local --libdir=lib/x86_64-linux-gnu build && \
-    meson compile -C build && \
-    meson install -C build
 
-# --- NVIDIA NVENC Setup ---
-# Add NVIDIA package repository
-RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/nvidia-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/nvidia-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" | tee /etc/apt/sources.list.d/nvidia.list
+# NVENC headers (required for --enable-nvenc)
+RUN git clone https://github.com/FFmpeg/nv-codec-headers.git --depth 1 && \
+    make -C nv-codec-headers install && rm -rf nv-codec-headers
 
-# Install only the necessary NVIDIA libraries, not the full CUDA toolkit
-RUN apt-get update && apt-get install -y \
-    libnvidia-encode-535 \
-    libnvidia-decode-535 \
-    libnvidia-compute-535 \
-    && rm -rf /var/lib/apt/lists/*
-
-# --- Compile FFmpeg with both Intel oneVPL and NVIDIA NVENC support ---
-WORKDIR /usr/src
+# FFmpeg build (NVENC + NVDEC + oneVPL/QSV + VAAPI)
 RUN git clone https://github.com/FFmpeg/FFmpeg.git --depth 1
 WORKDIR /usr/src/FFmpeg
-
-# Configure and compile FFmpeg with all necessary hardware acceleration flags
 RUN ./configure \
     --prefix=/usr/local \
     --enable-shared \
@@ -69,26 +38,42 @@ RUN ./configure \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libvpx \
-    --enable-nonfree \
+    --enable-vaapi \
     --enable-libvpl \
+    --enable-nonfree \
     --enable-cuda \
-    --enable-cuvid \
     --enable-nvenc \
-    --extra-libs=-lpthread
+    --enable-nvdec \
+    --extra-cflags='-I/usr/local/cuda/include' \
+    --extra-ldflags='-L/usr/local/cuda/lib64' \
+    --extra-libs='-lpthread -lm' && \
+    make -j"$(nproc)" && make install && ldconfig
 
-RUN make -j$(nproc)
-RUN make install
+# ---------- runtime stage ----------
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Your application-specific instructions go here
-# Install Python and application dependencies
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
-RUN pip3 install flask gunicorn
+# Add Intel GPU repo (runtime) and install VA-API media driver + minimal runtimes
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg wget \
+  && rm -rf /var/lib/apt/lists/* && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
+    | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
+      > /etc/apt/sources.list.d/intel-gpu-jammy.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+      intel-media-va-driver-non-free \
+      libva2 libdrm2 \
+      libx264-163 libx265-199 libvpx7 \
+      python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# FFmpeg from build stage
+COPY --from=build /usr/local /usr/local
+RUN ldconfig && pip3 install --no-cache-dir flask gunicorn
 
 WORKDIR /app
 COPY . /app
 
-# Expose the port your application will listen on
 EXPOSE 5000
-
-# The command to run your application using gunicorn for a production-ready server
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
