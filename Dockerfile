@@ -1,93 +1,130 @@
-# CUDA dev base on Ubuntu 22.04
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+# =========================
+# Builder: oneVPL + FFmpeg
+# =========================
+FROM ubuntu:24.04 AS builder
+ARG DEBIAN_FRONTEND=noninteractive
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LIBVA_DRIVER_NAME=iHD
-ENV LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
-
-# Base tools and repos
-RUN apt-get update && apt-get install -y \
-    software-properties-common \
-    ca-certificates \
-    curl \
-    gnupg \
-    wget \
+# Enable Ubuntu components
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common ca-certificates \
+  && add-apt-repository -y universe \
+  && add-apt-repository -y multiverse \
+  && add-apt-repository -y restricted \
+  && apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
-# Enable Ubuntu components needed for media stacks
-RUN add-apt-repository -y universe && \
-    add-apt-repository -y multiverse && \
-    add-apt-repository -y restricted && \
-    apt-get update
-
-# Core build deps + codec/dev libs for FFmpeg and VAAPI
-RUN apt-get install -y \
-    git \
-    build-essential \
-    cmake \
-    libtool \
-    nasm \
-    yasm \
-    pkg-config \
-    libx264-dev \
-    libx265-dev \
-    libvpx-dev \
-    libva-dev \
+# Install ALL dependencies first
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake libtool nasm yasm pkg-config \
+    meson ninja-build python3 git \
+    gcc-11 g++-11 \
     libdrm-dev \
-  && rm -rf /var/lib/apt/lists/*
-
-# (Optional) Intel repo for updated GPU stack; safe to include
-RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
-      > /etc/apt/sources.list.d/intel-gpu-jammy.list && \
-    apt-get update
-
-# Install VAAPI + oneVPL runtime pieces available on Jammy
-RUN apt-get install -y \
+    libsrt-openssl-dev libssl-dev \
+    libx264-dev \
+    libva-dev \
     libvpl-dev \
-    libvpl2 \
-    libmfx-gen1.2 \
-    libmfx1 \
-    intel-media-va-driver-non-free \
-    libva2 \
-    vainfo \
+    nvidia-cuda-dev \
+    nvidia-cuda-toolkit \
+    libnvidia-encode-550 \
+    libnvidia-decode-550 \
   && rm -rf /var/lib/apt/lists/*
+
+# Use GCC 11 for CUDA compatibility
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 \
+ && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+
+# Set environment variables
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
+ENV PATH="/usr/bin:/usr/local/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/usr/local/lib"
 
 WORKDIR /usr/src
 
-# NVIDIA Video Codec headers (for --enable-nvenc)
-RUN git clone https://github.com/FFmpeg/nv-codec-headers.git --depth 1 && \
-    cd nv-codec-headers && make install && cd .. && rm -rf nv-codec-headers
+# Build oneVPL from source (compatible with Ubuntu 24.04's libva 2.20.0)
+RUN git clone https://github.com/intel/libvpl.git --branch v2.12.0 --depth 1 \
+ && cmake -S libvpl -B libvpl/build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+ && cmake --build libvpl/build -j"$(nproc)" \
+ && cmake --install libvpl/build \
+ && ldconfig \
+ && rm -rf libvpl
 
-# Get FFmpeg source
+# NVIDIA codec headers
+RUN git clone https://github.com/FFmpeg/nv-codec-headers.git --depth 1 \
+ && make -C nv-codec-headers install \
+ && rm -rf nv-codec-headers
+
+# FFmpeg source
 RUN git clone https://github.com/FFmpeg/FFmpeg.git --depth 1
 WORKDIR /usr/src/FFmpeg
 
-# Configure FFmpeg with NVIDIA + Intel (oneVPL) + VAAPI
+# Configure FFmpeg
 RUN ./configure \
     --prefix=/usr/local \
-    --enable-shared \
     --enable-gpl \
-    --enable-libx264 \
-    --enable-libx265 \
-    --enable-libvpx \
     --enable-nonfree \
+    --enable-openssl \
+    --enable-libsrt \
     --enable-libvpl \
     --enable-vaapi \
-    --extra-cflags='-I/usr/local/cuda/include' \
-    --extra-ldflags='-L/usr/local/cuda/lib64' \
     --enable-cuda \
     --enable-nvenc \
     --enable-nvdec \
-    --extra-libs='-lpthread -lm' && \
-    make -j"$(nproc)" && make install && ldconfig
+    --enable-libx264 \
+    --pkg-config-flags="--static" \
+    --extra-cflags="-I/usr/include/cuda" \
+    --extra-ldflags="-L/usr/lib/x86_64-linux-gnu" \
+    --disable-doc \
+    --disable-debug
 
-# Python runtime and web server
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
-RUN pip3 install flask gunicorn
+# Build FFmpeg
+RUN make -j2 \
+ && make install \
+ && ldconfig
 
+# =========================
+# Final: minimal runtime
+# =========================
+FROM ubuntu:24.04 AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV LIBVA_DRIVER_NAME=iHD
+
+# Enable Ubuntu components
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common ca-certificates \
+ && add-apt-repository -y universe \
+ && add-apt-repository -y multiverse \
+ && add-apt-repository -y restricted \
+ && apt-get update \
+ && rm -rf /var/lib/apt/lists/*
+
+# Runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libdrm2 \
+    libsrt1.5-openssl \
+    libx264-164 \
+    python3-minimal \
+    libnvidia-encode-550 \
+    libnvidia-decode-550 \
+    libcudart12 \
+    libva2 libva-drm2 \
+    intel-media-va-driver-non-free \
+    libvpl2 libmfx1 \
+    libigdgmm12 \
+    python3-flask \
+    python3-gunicorn \
+  && rm -rf /var/lib/apt/lists/*
+
+# Copy FFmpeg from builder
+COPY --from=builder /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
+COPY --from=builder /usr/local/lib/ /usr/local/lib/
+RUN ldconfig
+
+# App
 WORKDIR /app
 COPY . /app
+RUN mkdir -p /app/videos
 
 EXPOSE 5000
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+CMD ["python3", "-m", "gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
