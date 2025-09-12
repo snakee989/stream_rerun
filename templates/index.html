@@ -24,9 +24,8 @@
 <div class="container">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="m-0">Rerun 24/7 <span id="status-dot" class="dot offline" title="Status"></span></h1>
-    <span class="hint">GPU: NVIDIA (NVENC) • Intel (VAAPI/QSV)</span>
+    <span class="hint">GPU: NVIDIA (NVENC) • Intel (VAAPI)</span>
   </div>
-
   <form id="form" class="mt-2">
     <div class="row g-3">
       <div class="col-12">
@@ -53,8 +52,7 @@
         <select class="form-select" id="encoder" name="encoder">
           <option value="libx264" {% if form.encoder=='libx264' %}selected{% endif %}>CPU (libx264)</option>
           <option value="h264_nvenc" {% if form.encoder=='h264_nvenc' %}selected{% endif %}>NVIDIA GPU (NVENC)</option>
-          <option value="h264_qsv" {% if form.encoder=='h264_qsv' %}selected{% endif %}>Intel iGPU (QSV)</option>
-          <option value="h264_vaapi" {% if form.encoder=='h264_vaapi' %}selected{% endif %}>Intel/AMD (VAAPI)</option>
+          <option value="h264_vaapi" {% if form.encoder=='h264_vaapi' %}selected{% endif %}>Intel iGPU (VAAPI)</option>
         </select>
         <div class="hint mt-1" id="preset-help"></div>
       </div>
@@ -66,7 +64,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-8" id="srt-div">
+      <div class="col-md-8" id="srt-div" style="display:none;">
         <label for="srt_url" class="form-label">SRT / RTMP URL</label>
         <input type="text" class="form-control" id="srt_url" name="srt_url"
                placeholder="srt://host:port?streamid=..." value="{{ form.srt_url }}">
@@ -80,10 +78,8 @@
       <button id="toggle-btn" type="button" class="btn btn-start">Start Stream</button>
     </div>
   </form>
-
   <div class="logs mt-3" id="logs">{{ logs }}</div>
 </div>
-
 <script>
 document.addEventListener("DOMContentLoaded", function() {
   const form       = document.getElementById("form");
@@ -97,7 +93,7 @@ document.addEventListener("DOMContentLoaded", function() {
   const logsEl     = document.getElementById("logs");
   const toggleBtn  = document.getElementById("toggle-btn");
   const currentPreset = "{{ form.preset }}";
-
+  
   function toggleInputs() {
     if (inputType.value === "file") {
       videoDiv.style.display = "block";
@@ -107,7 +103,7 @@ document.addEventListener("DOMContentLoaded", function() {
       srtDiv.style.display   = "block";
     }
   }
-
+  
   const PRESET_OPTIONS = {
     "libx264": {
       "ultrafast":"Ultra fast (lowest quality)",
@@ -126,19 +122,19 @@ document.addEventListener("DOMContentLoaded", function() {
       "p5":"P5","p6":"P6","p7":"P7","ll":"Low latency","llhp":"LL High Perf","llhq":"LL High Quality",
       "hp":"High Perf","hq":"High Quality","bd":"Blu-ray","lossless":"Lossless","losslesshp":"Lossless HP"
     },
-    "h264_qsv": { "veryfast":"Very fast","faster":"Faster","fast":"Fast","medium":"Medium","slow":"Slow" },
     "h264_vaapi": { "medium":"Medium" }
   };
+  
   const DEFAULT_FOR_ENCODER = {
-    "libx264":"medium","h264_nvenc":"p4","h264_qsv":"medium","h264_vaapi":"medium"
+    "libx264":"medium","h264_nvenc":"p4","h264_vaapi":"medium"
   };
+  
   const PRESET_HELP = {
     "libx264":"CPU presets trade speed vs quality; slower = better compression.",
     "h264_nvenc":"p1..p7 are speed→quality; ll* for latency.",
-    "h264_qsv":"Quick Sync presets trade speed vs quality.",
     "h264_vaapi":"Preset support varies; bitrate dominates."
   };
-
+  
   function populatePresets() {
     const enc = encoder.value;
     const options = PRESET_OPTIONS[enc] || {};
@@ -152,7 +148,7 @@ document.addEventListener("DOMContentLoaded", function() {
     preset.value = want;
     presetHelp.textContent = PRESET_HELP[enc] || "";
   }
-
+  
   async function pollStatus() {
     try {
       const r = await fetch("/status");
@@ -174,7 +170,7 @@ document.addEventListener("DOMContentLoaded", function() {
       }
     } catch (e) {}
   }
-
+  
   async function pollLogs() {
     try {
       const r = await fetch("/logs");
@@ -183,7 +179,7 @@ document.addEventListener("DOMContentLoaded", function() {
       logsEl.scrollTop = logsEl.scrollHeight;
     } catch (e) {}
   }
-
+  
   toggleBtn.addEventListener("click", async function() {
     try {
       toggleBtn.disabled = true;
@@ -203,12 +199,12 @@ document.addEventListener("DOMContentLoaded", function() {
       toggleBtn.disabled = false;
     }
   });
-
+  
   encoder.addEventListener("change", populatePresets);
   inputType.addEventListener("change", toggleInputs);
+  
   toggleInputs();
   populatePresets();
-
   setInterval(pollStatus, 2000);
   setInterval(pollLogs, 2000);
   pollStatus();
