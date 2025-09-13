@@ -1,3 +1,21 @@
+stream_rerun
+A comprehensive streaming tool for continuous, automated video delivery.
+
+Table of Contents
+🚀 Quick Start
+
+✨ Features
+
+🎯 Use Cases
+
+⚙️ Configuration
+
+🎮 Supported Platforms
+
+🖥️ Hardware Requirements
+
+📱 Web Interface
+
 🚀 Quick Start
 Option 1: Run with Docker (Recommended)
 Create a videos directory: mkdir videos
@@ -91,3 +109,4 @@ Real-time Logs - Monitor stream health
 Hardware Detection - Automatic encoder selection
 
 Status Monitoring - Uptime, restarts, and metrics
+
