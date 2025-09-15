@@ -20,7 +20,7 @@ DEBUG_MODE = os.getenv('DEBUG', 'False').lower() == 'true'
 MAX_LOG_LINES = int(os.getenv('MAX_LOG_LINES', '500'))
 VIDEO_FOLDER = os.getenv('VIDEO_FOLDER', '/app/videos')
 MAX_RESTARTS = int(os.getenv('MAX_RESTARTS', '10'))
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379')  # ← Fixed: Changed from localhost to redis
 
 # Create directories if they don't exist
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
