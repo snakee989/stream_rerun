@@ -1,75 +1,63 @@
 # Use a more compatible base image
 FROM ubuntu:22.04
 
-# Set environment variables to avoid interactive prompts
+# Non-interactive and TZ
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Install system dependencies including FFmpeg
+# System deps (incl. wget for healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    gnupg \
-    wget \
+    ca-certificates gnupg wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Add FFmpeg repository for latest version
+# Add FFmpeg repo (Jellyfin) and install FFmpeg + VAAPI tools
 RUN wget -O - https://repo.jellyfin.org/ubuntu/jellyfin_team.gpg.key | apt-key add - \
     && echo "deb [arch=amd64] https://repo.jellyfin.org/ubuntu jammy main" > /etc/apt/sources.list.d/jellyfin.list
-
-# Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libva-drm2 \
-    libva2 \
-    vainfo \
+    ffmpeg libva-drm2 libva2 vainfo \
     && rm -rf /var/lib/apt/lists/*
 
-# Install NVIDIA drivers if available (will skip if not present)
+# Optional NVIDIA runtime libraries (best-effort)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnvidia-encode-525 \
-    libnvidia-decode-525 \
-    && rm -rf /var/lib/apt/lists/* || \
-    echo "NVIDIA libraries not available, continuing without them"
+    libnvidia-encode-525 libnvidia-decode-525 \
+    && rm -rf /var/lib/apt/lists/* || echo "NVIDIA libraries not available, continuing"
 
-# Install Intel media driver
+# Optional Intel media driver (best-effort)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     intel-media-va-driver-non-free \
-    && rm -rf /var/lib/apt/lists/* || \
-    echo "Intel media driver not available, continuing without it"
+    && rm -rf /var/lib/apt/lists/* || echo "Intel media driver not available, continuing"
 
-# Install Python and pip
+# Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
+    python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Workdir
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Requirements (ensure gunicorn and redis are listed)
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# App code
 COPY . .
 
-# Create directories
+# Create app dirs
 RUN mkdir -p videos logs
 
-# Create a non-root user
-RUN useradd -m -u 1000 streamer && \
-    chown -R streamer:streamer /app
-
-# Switch to non-root user
+# Non-root user
+RUN useradd -m -u 1000 streamer && chown -R streamer:streamer /app
 USER streamer
 
-# Expose port
+# Expose app port
 EXPOSE 5000
 
-# Health check
+# Health check (avoid Python 'requests' dependency)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python3 -c "import requests; requests.get('http://localhost:5000/health', timeout=5)"
+    CMD wget -qO- http://localhost:5000/health || exit 1
 
-# Run application
-CMD ["python3", "app.py"]
+# Start with Gunicorn (threads for light concurrency; infinite timeout for long ops)
+# Adjust workers/threads for your host. Example: 2 workers, 4 threads each.
+CMD ["gunicorn", "-b", "0.0.0.0:5000", "--workers", "1", "--threads", "8", "--timeout", "0", "app:app"]
