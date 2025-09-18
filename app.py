@@ -5,95 +5,56 @@ import logging
 import subprocess
 import threading
 import time
+import random
 import signal
-import copy
+import uuid
+
 from collections import deque
 from urllib.parse import urlparse
-from datetime import datetime
-from flask import Flask, request, render_template, jsonify
-import redis
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
+import redis
+from flask import Flask, request, render_template, jsonify
+
+# --------------------------
 # Configuration
+# --------------------------
+
 DEBUG_MODE = os.getenv('DEBUG', 'False').lower() == 'true'
 MAX_LOG_LINES = int(os.getenv('MAX_LOG_LINES', '500'))
 VIDEO_FOLDER = os.getenv('VIDEO_FOLDER', '/app/videos')
 MAX_RESTARTS = int(os.getenv('MAX_RESTARTS', '10'))
-REDIS_URL = os.getenv('REDIS_URL', 'redis://Redis:6379')
+STALL_TIMEOUT = int(os.getenv('STALL_TIMEOUT', '30'))  # seconds of no log activity => restart
 
-# Create directories if they don't exist
+# Duplicate the shuffled order this many times to make a very long run
+PLAYLIST_REPEAT = int(os.getenv('PLAYLIST_REPEAT', '25'))
+
+# Redis config (optional persistence of form config)
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+STREAM_CONFIG_KEY = "rerun_stream_config"
+
+# Create video folder if it doesn't exist
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
-os.makedirs('/app/logs', exist_ok=True)
 
 # Setup logging
 logging.basicConfig(
     level=logging.DEBUG if DEBUG_MODE else logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('/app/logs/app.log')
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger('streaming-server')
-
-# Redis client
-try:
-    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-    redis_client.ping()
-    logger.info("Connected to Redis successfully")
-except redis.ConnectionError:
-    logger.warning("Could not connect to Redis, using in-memory storage")
-    redis_client = None
+logger = logging.getLogger(__name__)
 
 # Flask app
 app = Flask(__name__)
 
-# Runtime state and log buffer
-log_buffer = deque(maxlen=MAX_LOG_LINES)
+# --------------------------
+# Runtime state and logs
+# --------------------------
 
-# Default destinations
-DEFAULT_DESTINATIONS = [
-    {
-        "id": "1",
-        "name": "Twitch",
-        "url": "rtmp://live.twitch.tv/app/",
-        "key": "",
-        "enabled": False,
-        "type": "rtmp",
-        "status": "inactive"
-    },
-    {
-        "id": "2", 
-        "name": "YouTube",
-        "url": "rtmp://a.rtmp.youtube.com/live2/",
-        "key": "",
-        "enabled": False,
-        "type": "rtmp",
-        "status": "inactive"
-    },
-    {
-        "id": "3",
-        "name": "Facebook",
-        "url": "rtmps://live-api-s.facebook.com:443/rtmp/",
-        "key": "",
-        "enabled": False,
-        "type": "rtmps",
-        "status": "inactive"
-    },
-    {
-        "id": "4",
-        "name": "Kick",
-        "url": "rtmp://rtmp.kick.com:1935/live/",
-        "key": "",
-        "enabled": False,
-        "type": "rtmp",
-        "status": "inactive"
-    }
-]
+log_buffer = deque(maxlen=MAX_LOG_LINES)
 
 class StreamState:
     """Thread-safe stream state management"""
+
     def __init__(self):
         self._lock = threading.Lock()
         self.running = False
@@ -102,12 +63,7 @@ class StreamState:
         self.last_error = None
         self.process_id = None
         self.uptime = 0
-        self.current_video = None
-        self.destinations = copy.deepcopy(DEFAULT_DESTINATIONS)
-        self.playlist = []
-        self.current_index = 0
-        self.shuffle_mode = True
-    
+
     def set_running(self, running):
         with self._lock:
             self.running = running
@@ -117,183 +73,105 @@ class StreamState:
                 if self.start_time:
                     self.uptime += time.time() - self.start_time
                 self.start_time = None
-    
+
     def increment_restarts(self):
         with self._lock:
             self.restarts += 1
-    
+
     def set_error(self, error):
         with self._lock:
             self.last_error = error
-    
-    def set_current_video(self, video):
-        with self._lock:
-            self.current_video = video
-    
-    def set_destinations(self, destinations):
-        with self._lock:
-            self.destinations = destinations
-    
-    def set_playlist(self, playlist):
-        with self._lock:
-            self.playlist = playlist
-    
-    def set_shuffle_mode(self, shuffle):
-        with self._lock:
-            self.shuffle_mode = shuffle
-    
+
     def reset(self):
         with self._lock:
             self.running = False
             self.start_time = None
             self.last_error = None
             self.process_id = None
-            self.current_video = None
-    
+
     def get_status(self):
         with self._lock:
             current_uptime = self.uptime
             if self.running and self.start_time:
                 current_uptime += time.time() - self.start_time
-            
-            # Count enabled destinations
-            enabled_destinations = sum(1 for d in self.destinations if d.get('enabled', False) and d.get('key'))
-            
             return {
                 'running': self.running,
                 'restarts': self.restarts,
                 'uptime': current_uptime,
                 'last_error': self.last_error,
-                'process_id': self.process_id,
-                'current_video': self.current_video,
-                'destinations_count': len(self.destinations),
-                'enabled_destinations': enabled_destinations,
-                'playlist_length': len(self.playlist),
-                'shuffle_mode': self.shuffle_mode
+                'process_id': self.process_id
             }
 
-# Global state
+# Global process/supervisor state
 stream_state = StreamState()
 ffmpeg_process = None
 ffmpeg_thread = None
-stop_requested = False
-last_cmd = None
-file_observer = None
+stop_requested = threading.Event()
 
-# Default settings
+# --------------------------
+# Business rules and presets
+# --------------------------
+
+VALID_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.webm')
+X264_PRESETS = ["ultrafast","superfast","veryfast","faster","fast","medium","slow","slower","veryslow","placebo"]
+NVENC_PRESETS = ["p1","p2","p3","p4","p5","p6","p7"]
+VAAPI_CL_RANGE = [str(i) for i in range(1, 8)]
+
 DEFAULTS = {
+    "stream_key": "",
     "bitrate": "2500k",
-    "input_type": "file",
+    "input_type": "file",     # "file" or "srt"
     "video": "",
     "srt_url": "",
-    "encoder": "libx264",
+    "encoder": "libx264",     # "libx264", "h264_nvenc", "h264_vaapi"
     "preset": "medium",
+    "category": "",
+    "shuffle": "off",
 }
 
-# Initialize state from Redis if available
-def init_state():
-    try:
-        if redis_client:
-            # Try to load destinations from Redis
-            destinations_json = redis_client.get('stream:destinations')
-            if destinations_json:
-                stream_state.set_destinations(json.loads(destinations_json))
-            
-            # Try to load playlist from Redis
-            playlist_json = redis_client.get('stream:playlist')
-            if playlist_json:
-                stream_state.set_playlist(json.loads(playlist_json))
-            
-            # Try to load shuffle mode from Redis
-            shuffle_mode = redis_client.get('stream:shuffle_mode')
-            if shuffle_mode:
-                stream_state.set_shuffle_mode(shuffle_mode.lower() == 'true')
-                
-            logger.info("State initialized from Redis")
-    except Exception as e:
-        logger.error(f"Error initializing state from Redis: {e}")
+# Old-to-new field name synonyms (compat with older templates)
+FIELD_SYNONYMS = {
+    "stream_key": ["stream_key", "streamkey"],
+    "bitrate": ["bitrate"],
+    "input_type": ["input_type", "inputtype"],
+    "video": ["video"],
+    "srt_url": ["srt_url", "srturl"],
+    "encoder": ["encoder"],
+    "preset": ["preset"],
+    "category": ["category"],
+    "shuffle": ["shuffle"],
+}
 
-# Save state to Redis
-def save_state():
-    try:
-        if redis_client:
-            redis_client.set('stream:destinations', json.dumps(stream_state.destinations))
-            redis_client.set('stream:playlist', json.dumps(stream_state.playlist))
-            redis_client.set('stream:shuffle_mode', str(stream_state.shuffle_mode))
-    except Exception as e:
-        logger.error(f"Error saving state to Redis: {e}")
+# --------------------------
+# Validators and helpers
+# --------------------------
 
-# File system event handler
-class VideoFileHandler(FileSystemEventHandler):
-    def __init__(self):
-        super().__init__()
-    
-    def on_created(self, event):
-        if not event.is_directory and is_video_file(event.src_path):
-            logger.info(f"New video file detected: {event.src_path}")
-            relative_path = os.path.relpath(event.src_path, VIDEO_FOLDER)
-            log_buffer.append(f"[filewatch] New video added: {relative_path}")
-            # Rescan videos
-            threading.Thread(target=scan_videos, daemon=True).start()
-    
-    def on_deleted(self, event):
-        if not event.is_directory and is_video_file(event.src_path):
-            logger.info(f"Video file deleted: {event.src_path}")
-            relative_path = os.path.relpath(event.src_path, VIDEO_FOLDER)
-            log_buffer.append(f"[filewatch] Video deleted: {relative_path}")
-            # Rescan videos
-            threading.Thread(target=scan_videos, daemon=True).start()
-    
-    def on_moved(self, event):
-        if not event.is_directory and is_video_file(event.src_path):
-            logger.info(f"Video file moved: {event.src_path} -> {event.dest_path}")
-            src_relative = os.path.relpath(event.src_path, VIDEO_FOLDER)
-            dest_relative = os.path.relpath(event.dest_path, VIDEO_FOLDER)
-            log_buffer.append(f"[filewatch] Video moved: {src_relative} -> {dest_relative}")
-            # Rescan videos
-            threading.Thread(target=scan_videos, daemon=True).start()
+def parse_form_from_request(req_form):
+    data = {}
+    for new_name, aliases in FIELD_SYNONYMS.items():
+        val = None
+        for name in aliases:
+            if name in req_form:
+                val = req_form.get(name)
+                break
+        if val is None:
+            val = DEFAULTS.get(new_name, "")
+        if isinstance(val, str):
+            val = val.strip()
+        data[new_name] = val
+    return data
 
-def is_video_file(file_path):
-    """Check if a file is a video file"""
-    video_extensions = ['.mp4', '.mkv', '.avi', '.mov', '.flv', '.webm', '.m4v', '.wmv']
-    filename = file_path.lower()
-    return any(filename.endswith(ext) for ext in video_extensions)
-
-def start_file_watcher():
-    """Start watching for file changes"""
-    global file_observer
-    try:
-        file_observer = Observer()
-        event_handler = VideoFileHandler()
-        file_observer.schedule(event_handler, VIDEO_FOLDER, recursive=True)
-        file_observer.start()
-        logger.info(f"Started file watcher for: {VIDEO_FOLDER}")
-    except Exception as e:
-        logger.error(f"Error starting file watcher: {e}")
-
-def stop_file_watcher():
-    """Stop watching for file changes"""
-    global file_observer
-    if file_observer:
-        file_observer.stop()
-        file_observer.join()
-        logger.info("Stopped file watcher")
-
-# Validation functions
 def validate_video_filename(filename):
-    """Validate video filename to prevent path traversal attacks"""
-    if not filename or '..' in filename or filename.startswith('/') or '\\' in filename:
+    if not filename:
         return False
-    return is_video_file(filename)
+    return filename.lower().endswith(VALID_EXTS)
 
 def validate_bitrate(bitrate):
-    """Validate bitrate format (e.g., '2500k' or '2500')"""
     if not bitrate:
         return False
     return bool(re.match(r'^\d+k?$', bitrate.strip()))
 
 def validate_srt_url(url):
-    """Basic URL validation for SRT/RTMP inputs"""
     if not url:
         return False
     try:
@@ -304,64 +182,62 @@ def validate_srt_url(url):
         return False
 
 def validate_encoder(encoder):
-    """Validate encoder selection"""
-    valid_encoders = ['libx264', 'h264_nvenc', 'h264_vaapi']
-    return encoder in valid_encoders
+    return encoder in ['libx264', 'h264_nvenc', 'h264_vaapi']
 
-# Helper functions
-def scan_videos():
-    """Scan for video files and update playlist"""
+def _is_valid_video_file(path):
     try:
-        videos = []
-        for root, dirs, files in os.walk(VIDEO_FOLDER):
-            for file in files:
-                if is_video_file(file):
-                    full_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(full_path, VIDEO_FOLDER)
-                    videos.append(relative_path)
-        
-        videos.sort()
-        stream_state.set_playlist(videos)
-        
-        if redis_client:
-            redis_client.set('stream:playlist', json.dumps(videos))
-        
-        logger.info(f"Found {len(videos)} video files")
-        log_buffer.append(f"[filewatch] Found {len(videos)} videos")
-        
-        return videos
-    except Exception as e:
-        logger.error(f"Error scanning videos: {e}")
+        return os.path.isfile(path) and validate_video_filename(os.path.basename(path))
+    except Exception:
+        return False
+
+def _category_root(category):
+    return os.path.join(VIDEO_FOLDER, category)
+
+def _safe_resolve_under(root, relpath):
+    root_abs = os.path.abspath(root)
+    full = os.path.abspath(os.path.normpath(os.path.join(root_abs, relpath)))
+    if full != root_abs and not full.startswith(root_abs + os.sep):
+        raise ValueError("Path traversal detected")
+    return full
+
+def _iter_category_files_recursive(category):
+    root = _category_root(category)
+    if not os.path.isdir(root):
+        return
+    for dirpath, _, filenames in os.walk(root):
+        for f in filenames:
+            if f.lower().endswith(VALID_EXTS):
+                full = os.path.join(dirpath, f)
+                if os.path.isfile(full):
+                    rel = os.path.relpath(full, root)
+                    yield rel
+
+def list_categories():
+    cats = []
+    if os.path.isdir(VIDEO_FOLDER):
+        for name in sorted(os.listdir(VIDEO_FOLDER)):
+            if os.path.isdir(os.path.join(VIDEO_FOLDER, name)):
+                try:
+                    for _ in _iter_category_files_recursive(name):
+                        cats.append(name)
+                        break
+                except Exception:
+                    pass
+    return cats
+
+def list_videos_in_category(category):
+    try:
+        files = list(_iter_category_files_recursive(category))
+        files.sort()
+        return files
+    except Exception:
         return []
 
-def list_videos():
-    """List available video files with error handling"""
-    try:
-        if not stream_state.playlist:
-            return scan_videos()
-        return stream_state.playlist
-    except Exception as e:
-        logger.error(f"Error listing videos: {e}")
-        return []
-
-def get_next_video():
-    """Get the next video from the playlist"""
-    if not stream_state.playlist:
-        scan_videos()
-    
-    if not stream_state.playlist:
-        return None
-    
-    if stream_state.shuffle_mode:
-        import random
-        return random.choice(stream_state.playlist)
-    else:
-        next_index = (stream_state.current_index + 1) % len(stream_state.playlist)
-        stream_state.current_index = next_index
-        return stream_state.playlist[next_index]
+def total_video_count():
+    cats = list_categories()
+    return sum(len(list_videos_in_category(c)) for c in cats)
 
 def parse_bitrate_k(bitrate):
-    """Parse bitrate string like '2500k' to integer"""
     bitrate = bitrate.strip()
     if bitrate.endswith('k') and bitrate[:-1].isdigit():
         return int(bitrate[:-1])
@@ -370,42 +246,77 @@ def parse_bitrate_k(bitrate):
     return None
 
 def check_hardware_encoder_availability(encoder):
-    """Check if hardware encoder is available"""
     if encoder == "h264_vaapi":
         if not os.path.exists("/dev/dri/renderD128"):
             return False, "Intel VAAPI device (/dev/dri/renderD128) not found"
-    elif encoder == "h264_nvenc":
-        # Check if NVIDIA GPU is available
-        try:
-            result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-            if result.returncode != 0:
-                return False, "NVIDIA GPU not available"
-        except:
-            return False, "NVIDIA GPU not available"
     return True, None
 
-def build_cmd(input_args, encoder, preset, bitrate, destinations):
-    """Build FFmpeg command with comprehensive validation"""
+def normalize_preset(encoder, preset_value):
+    p = (preset_value or "").strip().lower()
+    if encoder == "libx264":
+        if p not in X264_PRESETS:
+            p = "medium"
+        return (["-preset", p], f"x264:{p}")
+    elif encoder == "h264_nvenc":
+        if p not in NVENC_PRESETS:
+            p = "p5"
+        return (["-preset", p], f"nvenc:{p}")
+    elif encoder == "h264_vaapi":
+        if p not in VAAPI_CL_RANGE:
+            p = "4"
+        return (["-compression_level", p], f"vaapi:cl{p}")
+    else:
+        return ([], "unknown")
+
+def _unique_playlist_path():
+    return f"/tmp/playlist_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}.txt"
+
+def _write_concat_playlist(paths, playlist_path=None):
+    if playlist_path is None:
+        playlist_path = _unique_playlist_path()
+    with open(playlist_path, "w", encoding="utf-8") as f:
+        for p in paths:
+            safe_p = p.replace("'", r"'\''")
+            f.write(f"file '{safe_p}'\n")
+    return playlist_path
+
+def _cleanup_old_playlists():
+    try:
+        now = time.time()
+        for name in os.listdir("/tmp"):
+            if name.startswith("playlist_") and name.endswith(".txt"):
+                path = os.path.join("/tmp", name)
+                try:
+                    st = os.stat(path)
+                    if now - st.st_mtime > 3600:  # older than 1 hour
+                        os.remove(path)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+def _output_format_for_url(url):
+    scheme = urlparse(url).scheme.lower()
+    if scheme.startswith("rtmp"):
+        return "flv"
+    elif scheme in ("srt", "udp"):
+        return "mpegts"
+    return "flv"
+
+def build_cmd(input_args, encoder, preset, bitrate, out_url):
     if not validate_bitrate(bitrate):
         raise ValueError(f"Invalid bitrate format: {bitrate}")
-    
     if not validate_encoder(encoder):
         raise ValueError(f"Invalid encoder: {encoder}")
-    
-    # Check hardware encoder availability
+
     available, error_msg = check_hardware_encoder_availability(encoder)
     if not available:
         raise ValueError(error_msg)
-    
+
     bk = parse_bitrate_k(bitrate)
-    if bk and bk < 100:
-        log_buffer.append('[warning] Very low bitrate detected (< 100k)')
-    elif bk and bk > 50000:
-        log_buffer.append('[warning] Very high bitrate detected (> 50M)')
-    
-    # Build command components
     buf = f"{bk*2}k" if bk else f"{int(bitrate)*2}" if bitrate.isdigit() else bitrate
-    
+    enc_args, preset_label = normalize_preset(encoder, preset)
+
     common_rc = [
         "-b:v", bitrate,
         "-maxrate", bitrate,
@@ -413,391 +324,177 @@ def build_cmd(input_args, encoder, preset, bitrate, destinations):
         "-g", "120",
         "-force_key_frames", "expr:gte(t,n_forced*2)"
     ]
-    
-    common_ts = ["-fflags", "+genpts"]
-    audio = ["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"]
-    
+
+    audio = [
+        "-af", "aresample=async=1:min_hard_comp=0.100:first_pts=0",
+        "-c:a", "aac",
+        "-b:a", "160k",
+        "-ar", "48000",
+        "-ac", "2"
+    ]
+
+    ts_flags = [
+        "-fflags", "+genpts",
+        "-avoid_negative_ts", "make_zero",
+        "-use_wallclock_as_timestamps", "1",
+        "-muxdelay", "0",
+        "-muxpreload", "0",
+    ]
+
     pre = []
-    vf = []
+    vf_chain = []
     vcodec = []
-    
+
     if encoder == "h264_nvenc":
-        # NVIDIA NVENC encoder
-        vcodec = ["-c:v", "h264_nvenc", "-preset", preset, "-rc", "cbr", "-pix_fmt", "yuv420p"]
+        vcodec = ["-c:v", "h264_nvenc", "-rc", "cbr", "-pix_fmt", "yuv420p"] + enc_args
+        vf_chain.append("fps=30")
     elif encoder == "h264_vaapi":
-        # Intel VAAPI encoder
         pre = ["-vaapi_device", "/dev/dri/renderD128"]
-        vf = ["-vf", "format=nv12,hwupload"]
-        vcodec = ["-c:v", "h264_vaapi", "-bf", "2"]
-    else:
-        # CPU x264 encoder (default)
-        vcodec = ["-c:v", "libx264", "-preset", preset, "-pix_fmt", "yuv420p"]
-    
-    # Build base command
-    cmd = (["ffmpeg", "-loglevel", "verbose"] + 
-           pre + input_args + vcodec + common_rc + vf + audio + common_ts)
-    
-    # Add multiple outputs for each destination
-    for dest in destinations:
-        if dest.get('enabled', False) and dest.get('key'):
-            full_url = f"{dest['url']}{dest['key']}"
-            cmd.extend(["-f", "flv", full_url])
-    
-    logger.info(f"Built FFmpeg command with {len([d for d in destinations if d.get('enabled', False) and d.get('key')])} destinations")
+        vf_chain += ["format=nv12", "hwupload", "fps=30"]
+        vcodec = ["-c:v", "h264_vaapi", "-bf", "2"] + enc_args
+    else:  # libx264
+        vcodec = ["-c:v", "libx264", "-pix_fmt", "yuv420p"] + enc_args
+        vf_chain.append("fps=30")
+
+    vf = ["-vf", ",".join(vf_chain)] if vf_chain else []
+
+    out_fmt = _output_format_for_url(out_url)
+    flv_live = ["-flvflags", "no_duration_filesize"] if out_fmt == "flv" else []
+
+    cmd = (["ffmpeg", "-loglevel", "verbose"] +
+           pre + input_args + vcodec + common_rc + vf + audio + ts_flags + flv_live +
+           ["-f", out_fmt, out_url])
+
+    logger.info(f"Using preset mapping: {preset_label}")
+    logger.info(f"Built FFmpeg command: {' '.join(cmd[:14])}...")
     return cmd
 
-def start_supervised(cmd, video_name):
-    """Start FFmpeg with supervision and auto-restart"""
-    global ffmpeg_process, stop_requested
+# --------------------------
+# Supervisor with stall watchdog and fast EOF restart
+# --------------------------
+
+def start_supervised(cmd, loop_forever=True):
+    global ffmpeg_process
     backoff = 2
     restarts = 0
-    
-    logger.info("Starting supervised FFmpeg process")
-    stream_state.set_current_video(video_name)
-    
-    while restarts < MAX_RESTARTS and not stop_requested:
+
+    while not stop_requested.is_set():
         stream_state.set_running(True)
-        
+        stalled = False
+        last_line_ts = time.time()
+
         try:
-            logger.info(f"Starting FFmpeg process (attempt {restarts + 1})")
+            logger.info(f"Starting FFmpeg (attempt {restarts + 1})")
             ffmpeg_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 bufsize=1,
                 universal_newlines=True,
-                preexec_fn=os.setsid if os.name != 'nt' else None
+                preexec_fn=os.setsid if os.name != 'nt' else None  # separate process group
             )
-            
             stream_state.process_id = ffmpeg_process.pid
-            log_buffer.append(f"[supervisor] Started FFmpeg process (PID: {ffmpeg_process.pid})")
-            
-            # Read output line by line
-            for line in ffmpeg_process.stdout:
-                if stop_requested:
+            log_buffer.append(f"[supervisor] Started FFmpeg (PID: {ffmpeg_process.pid})")
+
+            # Read combined stdout/stderr lines
+            for line in iter(ffmpeg_process.stdout.readline, ''):
+                if stop_requested.is_set():
                     break
-                log_buffer.append(line.rstrip("\n"))
-            
+                line = line.rstrip("\n")
+                if line:
+                    log_buffer.append(line)
+                    last_line_ts = time.time()
+
+                # Watchdog: restart if no progress
+                if (time.time() - last_line_ts) > STALL_TIMEOUT:
+                    stalled = True
+                    log_buffer.append(f"[watchdog] No log activity for {STALL_TIMEOUT}s, restarting")
+                    try:
+                        os.killpg(ffmpeg_process.pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+                    break
+
             rc = ffmpeg_process.wait()
             stream_state.set_running(False)
-            
-            if stop_requested:
-                log_buffer.append("[supervisor] Stop requested, exiting supervisor")
+
+            if stop_requested.is_set():
+                log_buffer.append("[supervisor] Stop requested; exiting")
                 break
-            
+
+            # Fast restart on normal EOF when looping
+            if loop_forever and rc == 0 and not stalled:
+                restarts += 1
+                stream_state.increment_restarts()
+                backoff = 2  # reset backoff for EOF
+                log_buffer.append("[supervisor] EOF reached; immediate restart (no backoff)")
+                _cleanup_old_playlists()
+                continue
+
+            # Abnormal exit or stalled: backoff then restart (if allowed)
             restarts += 1
             stream_state.increment_restarts()
-            
-            if restarts >= MAX_RESTARTS:
-                log_buffer.append(f"[supervisor] Max restarts ({MAX_RESTARTS}) reached, giving up")
+            if not loop_forever and restarts >= MAX_RESTARTS:
+                log_buffer.append(f"[supervisor] Max restarts ({MAX_RESTARTS}) reached; stopping")
                 stream_state.set_error(f"Max restarts ({MAX_RESTARTS}) reached")
                 break
-            
-            log_buffer.append(f"[supervisor] FFmpeg exited (code={rc}), restarting in {backoff}s (attempt {restarts + 1}/{MAX_RESTARTS})")
-            time.sleep(backoff)
-            backoff = min(backoff * 1.5, 60)  # Exponential backoff with cap
-            
+
+            delay = min(backoff, 60)
+            log_buffer.append(f"[supervisor] FFmpeg exited code={rc}; restarting in {delay}s")
+            time.sleep(delay)
+            backoff = min(int(backoff * 1.5), 60)
+
         except Exception as e:
             stream_state.set_running(False)
             stream_state.set_error(str(e))
-            
-            if stop_requested:
+            if stop_requested.is_set():
                 break
-                
             restarts += 1
-            error_msg = f"[supervisor] Exception: {e}, retry in {backoff}s"
-            log_buffer.append(error_msg)
-            logger.error(error_msg)
-            
-            if restarts < MAX_RESTARTS:
-                time.sleep(backoff)
-                backoff = min(backoff * 1.5, 60)
-    
+            stream_state.increment_restarts()
+            log_buffer.append(f"[supervisor] Exception: {e}; retry in {backoff}s")
+            logger.error(f"[supervisor] Exception: {e}")
+            time.sleep(backoff)
+            backoff = min(int(backoff * 1.5), 60)
+
     stream_state.set_running(False)
-    stream_state.set_current_video(None)
     logger.info("Supervisor thread exiting")
 
-# Initialize state
-init_state()
-scan_videos()
-start_file_watcher()
+# --------------------------
+# Routes
+# --------------------------
 
-# Flask routes
 @app.route("/", methods=["GET"])
 def index():
-    """Main page with streaming controls"""
     try:
-        form = DEFAULTS.copy()
-        videos = list_videos()
-        
-        # Pre-select first video if available
-        if videos and not form["video"]:
-            form["video"] = videos[0]
-        
-        # Get current destinations
-        destinations = stream_state.destinations
-        
-        return render_template("index.html", 
-                             videos=videos, 
-                             logs="", 
-                             form=form, 
-                             destinations=destinations,
-                             shuffle_mode=stream_state.shuffle_mode)
+        saved_config_json = redis_client.get(STREAM_CONFIG_KEY)
+        saved_config = json.loads(saved_config_json) if saved_config_json else {}
+        form = {**DEFAULTS, **saved_config}
+
+        cats = list_categories()
+        if not form.get("category") or form["category"] not in cats:
+            form["category"] = cats[0] if cats else ""
+        vids = list_videos_in_category(form["category"]) if form["category"] else []
+        if vids and (not form.get("video") or form["video"] not in vids):
+            form["video"] = vids[0]
+
+        return render_template("index.html", categories=cats, videos=vids, logs="", form=form)
     except Exception as e:
         logger.error(f"Error loading index page: {e}")
         return f"Error loading page: {str(e)}", 500
 
-@app.route("/toggle", methods=["POST"])
-def toggle():
-    """Start/stop streaming with comprehensive validation"""
-    global ffmpeg_process, ffmpeg_thread, last_cmd, stop_requested
-    
-    try:
-        if stream_state.running:
-            logger.info("Stopping stream")
-            stop_requested = True
-            
-            # Terminate FFmpeg process
-            if ffmpeg_process and ffmpeg_process.poll() is None:
-                try:
-                    logger.info(f"Terminating FFmpeg process (PID: {ffmpeg_process.pid})")
-                    ffmpeg_process.terminate()
-                    ffmpeg_process.wait(timeout=3)
-                    logger.info("FFmpeg process terminated successfully")
-                except subprocess.TimeoutExpired:
-                    logger.warning("FFmpeg process didn't terminate gracefully, killing it")
-                    try:
-                        ffmpeg_process.kill()
-                        ffmpeg_process.wait(timeout=1)
-                        logger.info("FFmpeg process killed")
-                    except Exception as e:
-                        logger.error(f"Failed to kill FFmpeg process: {e}")
-                        log_buffer.append(f"[error] Failed to kill process: {e}")
-                except Exception as e:
-                    logger.error(f"Failed to terminate FFmpeg process: {e}")
-                    log_buffer.append(f"[error] Failed to stop process: {e}")
-            
-            # Wait for supervisor thread to finish
-            if ffmpeg_thread and ffmpeg_thread.is_alive():
-                logger.info("Waiting for supervisor thread to finish")
-                ffmpeg_thread.join(timeout=5)
-                if ffmpeg_thread.is_alive():
-                    logger.warning("Supervisor thread didn't finish in time")
-            
-            stream_state.reset()
-            log_buffer.append("[system] Stream stopped by user")
-            return jsonify({"running": False, "message": "Stream stopped successfully"})
-        
-        # Starting stream - validate form data
-        form = {}
-        for key in DEFAULTS.keys():
-            value = request.form.get(key, DEFAULTS[key])
-            form[key] = value.strip() if isinstance(value, str) else value
-        
-        # Get enabled destinations
-        destinations = []
-        for dest in stream_state.destinations:
-            enabled = request.form.get(f"dest_{dest['id']}_enabled") == "on"
-            key = request.form.get(f"dest_{dest['id']}_key", "").strip()
-            if enabled and key:
-                dest_copy = dest.copy()
-                dest_copy['enabled'] = True
-                dest_copy['key'] = key
-                dest_copy['status'] = 'active'
-                destinations.append(dest_copy)
-        
-        # Validate at least one destination
-        if not destinations:
-            return jsonify({"running": False, "error": "At least one destination with stream key is required"}), 400
-        
-        # Update destinations state
-        for dest in stream_state.destinations:
-            for active_dest in destinations:
-                if dest['id'] == active_dest['id']:
-                    dest['enabled'] = True
-                    dest['key'] = active_dest['key']
-                    dest['status'] = 'active'
-                else:
-                    dest['enabled'] = False
-                    dest['status'] = 'inactive'
-        
-        save_state()
-        
-        # Comprehensive input validation
-        if not validate_bitrate(form["bitrate"]):
-            return jsonify({"running": False, "error": "Invalid bitrate format (use format like '2500k' or '2500')"}), 400
-        
-        if not validate_encoder(form["encoder"]):
-            return jsonify({"running": False, "error": "Invalid encoder selection"}), 400
-        
-        # Input-specific validation
-        if form["input_type"] == "file":
-            if form["video"] and not validate_video_filename(form["video"]):
-                return jsonify({"running": False, "error": "Invalid video filename"}), 400
-            
-            if not form["video"]:
-                videos = list_videos()
-                if not videos:
-                    return jsonify({"running": False, "error": "No video files found. Upload videos to the video folder"}), 400
-                form["video"] = videos[0]
-            
-            input_path = os.path.join(VIDEO_FOLDER, form["video"])
-            if not os.path.exists(input_path):
-                return jsonify({"running": False, "error": f"Video file not found: {form['video']}"}), 400
-            
-            input_args = ["-re", "-stream_loop", "-1", "-i", input_path]
-            video_name = form["video"]
-            
-        elif form["input_type"] == "srt":
-            if not form["srt_url"] or not validate_srt_url(form["srt_url"]):
-                return jsonify({"running": False, "error": "Invalid or missing SRT / RTMP input URL"}), 400
-            
-            input_args = ["-re", "-rw_timeout", "15000000", "-i", form["srt_url"]]
-            video_name = form["srt_url"]
-            
-        else:
-            return jsonify({"running": False, "error": "Invalid input type"}), 400
-        
-        # Build FFmpeg command
-        try:
-            cmd = build_cmd(
-                input_args=input_args,
-                encoder=form["encoder"],
-                preset=form["preset"],
-                bitrate=form["bitrate"],
-                destinations=destinations
-            )
-        except Exception as e:
-            logger.error(f"Failed to build FFmpeg command: {e}")
-            return jsonify({"running": False, "error": f"Failed to build command: {str(e)}"}), 400
-        
-        # Start the stream
-        last_cmd = cmd
-        stop_requested = False
-        
-        logger.info("Starting new stream")
-        ffmpeg_thread = threading.Thread(
-            target=start_supervised, 
-            args=(cmd, video_name), 
-            daemon=True
-        )
-        ffmpeg_thread.start()
-        
-        dest_count = len(destinations)
-        success_msg = f"Started: {video_name} → {dest_count} destinations @ {form['bitrate']} ({form['encoder']})"
-        
-        log_buffer.append(f"[system] {success_msg}")
-        logger.info(success_msg)
-        
-        return jsonify({
-            "running": True,
-            "message": success_msg
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in toggle endpoint: {e}")
-        return jsonify({"running": False, "error": f"Internal error: {str(e)}"}), 500
-
-@app.route("/skip", methods=["POST"])
-def skip_video():
-    """Skip to the next video in the playlist"""
-    global stop_requested
-    
-    if not stream_state.running:
-        return jsonify({"error": "Stream is not running"}), 400
-    
-    logger.info("Skipping current video")
-    stop_requested = True
-    
-    # Terminate FFmpeg process
-    if ffmpeg_process and ffmpeg_process.poll() is None:
-        try:
-            ffmpeg_process.terminate()
-            ffmpeg_process.wait(timeout=2)
-        except:
-            try:
-                ffmpeg_process.kill()
-                ffmpeg_process.wait(timeout=1)
-            except:
-                pass
-    
-    stop_requested = False
-    log_buffer.append("[system] Skipped to next video")
-    
-    return jsonify({"message": "Skipping to next video"})
-
-@app.route("/shuffle", methods=["POST"])
-def toggle_shuffle():
-    """Toggle shuffle mode"""
-    data = request.get_json()
-    if not data or 'shuffle' not in data:
-        return jsonify({"error": "Missing shuffle parameter"}), 400
-    
-    shuffle = data['shuffle']
-    stream_state.set_shuffle_mode(shuffle)
-    save_state()
-    
-    mode = "enabled" if shuffle else "disabled"
-    log_buffer.append(f"[system] Shuffle mode {mode}")
-    
-    return jsonify({"message": f"Shuffle mode {mode}", "shuffle": shuffle})
-
-@app.route("/destinations", methods=["GET", "POST"])
-def manage_destinations():
-    """Get or update streaming destinations"""
-    try:
-        if request.method == "POST":
-            data = request.get_json()
-            if not data or not isinstance(data, list):
-                return jsonify({"error": "Invalid destinations data"}), 400
-            
-            # Create a complete destinations list with all properties
-            complete_destinations = []
-            for new_dest in data:
-                # Find the original destination to preserve all properties
-                original_dest = next((d for d in DEFAULT_DESTINATIONS if d["id"] == new_dest["id"]), None)
-                if original_dest:
-                    # Merge the original properties with the new ones
-                    merged_dest = copy.deepcopy(original_dest)
-                    merged_dest.update(new_dest)
-                    complete_destinations.append(merged_dest)
-                else:
-                    # If it's a custom destination, use the provided data
-                    complete_destinations.append(new_dest)
-            
-            # Save to state and Redis
-            stream_state.set_destinations(complete_destinations)
-            save_state()
-            
-            logger.info(f"Updated destinations: {[d['name'] for d in complete_destinations]}")
-            
-            return jsonify({
-                "message": "Destinations updated successfully", 
-                "destinations": complete_destinations
-            })
-        
-        else:
-            # GET request - return current destinations
-            return jsonify({"destinations": stream_state.destinations})
-            
-    except Exception as e:
-        logger.error(f"Error managing destinations: {e}")
-        return jsonify({"error": f"Internal error: {str(e)}"}), 500
-
 @app.route("/status")
 def status():
-    """Get current streaming status"""
     try:
-        status_data = stream_state.get_status()
-        status_data["video_count"] = len(list_videos())
-        return jsonify(status_data)
+        s = stream_state.get_status()
+        s["video_count"] = total_video_count()
+        s["tail"] = list(log_buffer)[-50:]
+        return jsonify(s)
     except Exception as e:
         logger.error(f"Error getting status: {e}")
         return jsonify({"error": "Failed to get status"}), 500
 
 @app.route("/logs")
-def logs():
-    """Get recent log entries"""
+def logs_api():
     try:
         tail = list(log_buffer)[-200:]
         return jsonify({"lines": tail})
@@ -805,38 +502,181 @@ def logs():
         logger.error(f"Error getting logs: {e}")
         return jsonify({"lines": [f"Error getting logs: {e}"]}), 500
 
-@app.route("/videos")
-def get_videos():
-    """Get list of available videos"""
+@app.route("/logs/clear", methods=["POST"])
+def logs_clear():
     try:
-        videos = list_videos()
-        return jsonify({"videos": videos, "count": len(videos)})
+        log_buffer.clear()
+        return jsonify({"ok": True})
     except Exception as e:
-        logger.error(f"Error getting videos: {e}")
-        return jsonify({"error": "Failed to get videos"}), 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-@app.route("/health")
-def health():
-    """Health check endpoint with encoder availability"""
+@app.route("/videos", methods=["GET"])
+def videos_api():
+    category = request.args.get("category", "").strip()
+    return jsonify({"videos": list_videos_in_category(category)})
+
+@app.route("/categories", methods=["GET"])
+def categories_api():
+    return jsonify({"categories": list_categories()})
+
+@app.route("/start", methods=["POST"])
+def start_stream():
+    global ffmpeg_thread
     try:
-        encoders = {
-            "cpu": {"name": "libx264", "available": True},
-            "nvidia": {"name": "h264_nvenc", "available": check_hardware_encoder_availability("h264_nvenc")[0]},
-            "intel": {"name": "h264_vaapi", "available": check_hardware_encoder_availability("h264_vaapi")[0]}
+        if stream_state.get_status()["running"]:
+            return jsonify({"running": True, "message": "Already running"}), 200
+
+        form = parse_form_from_request(request.form)
+
+        # Save config
+        config_to_save = {
+            k: form[k] for k in ["stream_key", "bitrate", "input_type", "video", "srt_url", "encoder", "preset", "category", "shuffle"]
         }
-        
-        return jsonify({
-            "status": "healthy",
-            "encoders": encoders,
-            "video_folder": VIDEO_FOLDER,
-            "video_count": len(list_videos()),
-            "max_restarts": MAX_RESTARTS,
-            "destinations_count": len(stream_state.destinations),
-            "redis_connected": redis_client is not None and redis_client.ping()
-        })
+        redis_client.set(STREAM_CONFIG_KEY, json.dumps(config_to_save))
+
+        if not form["stream_key"]:
+            return jsonify({"running": False, "error": "Stream key / output URL is required"}), 400
+        if not validate_bitrate(form["bitrate"]):
+            return jsonify({"running": False, "error": "Invalid bitrate format (e.g., 2500k)"}), 400
+        if not validate_encoder(form["encoder"]):
+            return jsonify({"running": False, "error": "Invalid encoder selection"}), 400
+
+        input_desc = ""
+        loop_forever = False
+
+        # Build input args
+        if form["input_type"] == "file":
+            category = form.get("category", "").strip()
+            cats = list_categories()
+            if category not in cats:
+                return jsonify({"running": False, "error": "Choose a valid category"}), 400
+
+            shuffle_enabled = str(form.get("shuffle", "off")).lower() in ("on", "true", "1", "yes")
+            root = _category_root(category)
+
+            if shuffle_enabled:
+                files = list_videos_in_category(category)
+                if not files:
+                    return jsonify({"running": False, "error": f"No videos in category: {category}"}), 400
+
+                abs_paths = []
+                for rel in files:
+                    try:
+                        full = _safe_resolve_under(root, rel)
+                    except ValueError:
+                        continue
+                    if _is_valid_video_file(full):
+                        abs_paths.append(full)
+
+                if not abs_paths:
+                    return jsonify({"running": False, "error": f"No valid videos in category: {category}"}), 400
+
+                # Shuffle once, then duplicate the sequence PLAYLIST_REPEAT times
+                random.shuffle(abs_paths)
+                if PLAYLIST_REPEAT > 1:
+                    abs_paths = abs_paths * PLAYLIST_REPEAT
+
+                plist = _write_concat_playlist(abs_paths)  # unique per start
+
+                # IMPORTANT: no -stream_loop with concat; supervisor loops on EOF (far in the future)
+                input_args = ["-re", "-f", "concat", "-safe", "0", "-i", plist]
+                input_desc = f"[shuffle×{PLAYLIST_REPEAT}] {category}/playlist"
+                loop_forever = True
+            else:
+                rel_video = form.get("video", "").strip()
+                vids = list_videos_in_category(category)
+                if not rel_video:
+                    if not vids:
+                        return jsonify({"running": False, "error": f"No videos in category: {category}"}), 400
+                    rel_video = vids[0]
+                try:
+                    input_path = _safe_resolve_under(root, rel_video)
+                except ValueError:
+                    return jsonify({"running": False, "error": "Invalid video path"}), 400
+                if not _is_valid_video_file(input_path):
+                    return jsonify({"running": False, "error": "Selected file is not a valid video"}), 400
+
+                # Single file can safely use -stream_loop -1
+                input_args = ["-re", "-stream_loop", "-1", "-i", input_path]
+                input_desc = f"{category}/{rel_video}"
+                loop_forever = True
+
+        elif form["input_type"] == "srt":
+            if not form["srt_url"] or not validate_srt_url(form["srt_url"]):
+                return jsonify({"running": False, "error": "Invalid or missing SRT / RTMP input URL"}), 400
+            input_args = ["-re", "-rw_timeout", "15000000", "-i", form["srt_url"]]
+            input_desc = form["srt_url"]
+            loop_forever = True
+        else:
+            return jsonify({"running": False, "error": "Invalid input type"}), 400
+
+        # Build command
+        try:
+            cmd = build_cmd(
+                input_args=input_args,
+                encoder=form["encoder"],
+                preset=form["preset"],
+                bitrate=form["bitrate"],
+                out_url=form["stream_key"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to build FFmpeg command: {e}")
+            return jsonify({"running": False, "error": f"Failed to build command: {str(e)}"}), 400
+
+        # Start supervised
+        stop_requested.clear()
+        log_buffer.append(f"[system] Starting: {input_desc} @ {form['bitrate']} ({form['encoder']}, preset {form['preset']})")
+        logger.info(f"Starting supervised stream: {input_desc}")
+        thread = threading.Thread(target=start_supervised, args=(cmd, loop_forever), daemon=True)
+        thread.start()
+        globals()["ffmpeg_thread"] = thread
+
+        return jsonify({"running": True, "message": f"Started: {input_desc}"})
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({"status": "error", "error": str(e)}), 500
+        logger.error(f"Error in /start: {e}")
+        return jsonify({"running": False, "error": f"Internal error: {str(e)}"}), 500
+
+@app.route("/stop", methods=["POST"])
+def stop_stream():
+    global ffmpeg_process, ffmpeg_thread
+    try:
+        stop_requested.set()
+        # Kill entire process group
+        if ffmpeg_process and ffmpeg_process.poll() is None:
+            try:
+                os.killpg(ffmpeg_process.pid, signal.SIGTERM)
+                try:
+                    ffmpeg_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(ffmpeg_process.pid, signal.SIGKILL)
+            except Exception as e:
+                logger.warning(f"Failed to gracefully stop FFmpeg: {e}")
+        if ffmpeg_thread and ffmpeg_thread.is_alive():
+            ffmpeg_thread.join(timeout=5)
+        stream_state.reset()
+        log_buffer.append("[system] Stream stopped")
+        return jsonify({"running": False, "message": "Stopped"})
+    except Exception as e:
+        logger.error(f"Error in /stop: {e}")
+        return jsonify({"running": False, "error": f"Internal error: {str(e)}"}), 500
+
+# Compatibility: single toggle endpoint used by many templates
+@app.route("/toggle", methods=["POST"])
+def toggle():
+    try:
+        if stream_state.get_status()["running"]:
+            return stop_stream()
+        else:
+            return start_stream()
+    except Exception as e:
+        logger.error(f"Error in /toggle: {e}")
+        return jsonify({"running": False, "error": f"Internal error: {str(e)}"}), 500
+
+@app.route("/rescan", methods=["POST"])
+def rescan():
+    cats = list_categories()
+    result = {c: len(list_videos_in_category(c)) for c in cats}
+    return jsonify({"categories": cats, "counts": result})
 
 @app.errorhandler(404)
 def not_found(error):
@@ -847,36 +687,8 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
-# Signal handlers for graceful shutdown
-def signal_handler(signum, frame):
-    logger.info(f"Received signal {signum}, shutting down gracefully")
-    stop_file_watcher()
-    
-    global stop_requested
-    stop_requested = True
-    
-    if ffmpeg_process and ffmpeg_process.poll() is None:
-        try:
-            ffmpeg_process.terminate()
-            ffmpeg_process.wait(timeout=5)
-        except:
-            try:
-                ffmpeg_process.kill()
-            except:
-                pass
-    
-    save_state()
-    exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 if __name__ == "__main__":
-    logger.info(f"Starting streaming server in {'DEBUG' if DEBUG_MODE else 'PRODUCTION'} mode")
+    logger.info(f"Starting Flask app in {'DEBUG' if DEBUG_MODE else 'PRODUCTION'} mode")
     logger.info(f"Video folder: {VIDEO_FOLDER}")
-    logger.info(f"Max log lines: {MAX_LOG_LINES}")
-    logger.info(f"Max restarts: {MAX_RESTARTS}")
-    logger.info(f"Loaded {len(stream_state.destinations)} destinations")
-    logger.info(f"Found {len(stream_state.playlist)} videos")
-    
+    logger.info(f"Max log lines: {MAX_LOG_LINES}  |  Max restarts: {MAX_RESTARTS}  |  Stall timeout: {STALL_TIMEOUT}s  |  Repeat: {PLAYLIST_REPEAT}x")
     app.run(host="0.0.0.0", port=5000, debug=DEBUG_MODE)
