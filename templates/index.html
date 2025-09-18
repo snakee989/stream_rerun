@@ -1,874 +1,354 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rerun Server</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
-    <style>
-        :root {
-            --bg-primary: #0f1113;
-            --bg-secondary: #171a1d;
-            --bg-tertiary: #1f2327;
-            --bg-logs: #111417;
-            --text-primary: #e6e8ea;
-            --text-secondary: #9aa0a6;
-            --border-color: #2c3136;
-            --success-color: #1a7f37;
-            --danger-color: #c0353a;
-            --warning-color: #f59e0b;
-            --info-color: #58a6ff;
-        }
-        
-        body {
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin-top: 40px;
-            padding: 28px;
-            background-color: var(--bg-secondary);
-            border-radius: 14px;
-            box-shadow: 0 6px 24px rgba(0,0,0,0.4);
-        }
-        
-        h1 {
-            font-size: 1.6rem;
-            font-weight: 600;
-        }
-        
-        .form-label {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-        }
-        
-        .hint {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            margin-top: 0.25rem;
-        }
-        
-        .btn-start {
-            background-color: var(--success-color);
-            color: #fff;
-            border: none;
-        }
-        
-        .btn-start:hover {
-            background-color: #22863a;
-            color: #fff;
-        }
-        
-        .btn-stop {
-            background-color: var(--danger-color);
-            color: #fff;
-            border: none;
-        }
-        
-        .btn-stop:hover {
-            background-color: #d73a49;
-            color: #fff;
-        }
-        
-        select, input {
-            background-color: var(--bg-tertiary) !important;
-            color: var(--text-primary) !important;
-            border: 1px solid var(--border-color) !important;
-        }
-        
-        select:focus, input:focus {
-            background-color: var(--bg-tertiary) !important;
-            color: var(--text-primary) !important;
-            border-color: var(--success-color) !important;
-            box-shadow: 0 0 0 0.25rem rgba(26, 127, 55, 0.25) !important;
-        }
-        
-        .logs {
-            background-color: var(--bg-logs);
-            border: 1px solid var(--border-color);
-            padding: 15px;
-            height: 280px;
-            overflow-y: auto;
-            border-radius: 8px;
-            margin-top: 20px;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 0.875rem;
-            line-height: 1.4;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-        
-        .status-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--border-color);
-        }
-        
-        .dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-left: 10px;
-            transition: all 0.3s ease;
-        }
-        
-        .dot.online {
-            background-color: var(--success-color);
-            box-shadow: 0 0 10px rgba(26,127,55,0.8);
-            animation: pulse 2s infinite;
-        }
-        
-        .dot.offline {
-            background-color: #555b61;
-        }
-        
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(26,127,55,0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(26,127,55,0); }
-            100% { box-shadow: 0 0 0 0 rgba(26,127,55,0); }
-        }
-        
-        .alert {
-            border: none;
-            border-radius: 8px;
-            margin-top: 15px;
-        }
-        
-        .alert-danger {
-            background-color: rgba(192, 53, 58, 0.1);
-            color: #f85149;
-            border-left: 4px solid var(--danger-color);
-        }
-        
-        .alert-success {
-            background-color: rgba(26, 127, 55, 0.1);
-            color: #56d364;
-            border-left: 4px solid var(--success-color);
-        }
-        
-        /* Destination management styles */
-        .destination-row {
-            background-color: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            position: relative;
-        }
-        
-        .destination-counter {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-bottom: 5px;
-        }
-        
-        .destination-inputs {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        
-        .destination-inputs input {
-            flex: 1;
-        }
-        
-        .btn-add-destination {
-            background-color: var(--success-color);
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            font-size: 20px;
-            font-weight: bold;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .btn-add-destination:hover {
-            background-color: #22863a;
-        }
-        
-        .btn-remove-destination {
-            background-color: var(--danger-color);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 5px 10px;
-            font-size: 12px;
-            cursor: pointer;
-            position: absolute;
-            top: 10px;
-            right: 10px;
-        }
-        
-        .btn-remove-destination:hover {
-            background-color: #d73a49;
-        }
-        
-        @media (max-width: 768px) {
-            .container {
-                margin-top: 20px;
-                padding: 20px;
-            }
-            
-            .logs {
-                height: 200px;
-            }
-            
-            .destination-inputs {
-                flex-direction: column;
-                gap: 8px;
-            }
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Rerun 24/7 Streaming</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --card: #121821;
+      --muted: #93a4b8;
+      --text: #e6edf3;
+      --line: #1f2a37;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --secondary: #475569;
+      --secondary-hover: #334155;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --accent: #8b5cf6;
+      --input-bg: #0e141b;
+    }
+    @media (prefers-color-scheme: dark) { :root { color-scheme: dark; } }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px; color: var(--text);
+      background: radial-gradient(1200px 800px at 20% -10%, #0e1420 0%, var(--bg) 60%) no-repeat,
+                  radial-gradient(900px 600px at 120% 10%, rgba(59,130,246,0.08) 0%, rgba(59,130,246,0) 60%) no-repeat,
+                  var(--bg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    h1 { margin: 0 0 0.25rem 0; font-weight: 700; letter-spacing: 0.2px; }
+    small { color: var(--muted); }
+    .status { display: inline-flex; align-items: center; gap: 10px; margin-top: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--danger); box-shadow: 0 0 0 3px rgba(239,68,68,0.15); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-top: 18px; }
+    .card {
+      background: linear-gradient(180deg, rgba(18,24,33,0.92), rgba(18,24,33,0.92)) padding-box,
+                  linear-gradient(145deg, rgba(59,130,246,0.15), rgba(139,92,246,0.08)) border-box;
+      border: 1px solid transparent; border-radius: 12px; padding: 14px; backdrop-filter: blur(6px);
+    }
+    label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 13px; }
+    input[type=text], input[type=url], select {
+      width: 100%; padding: 10px 11px; background: var(--input-bg); color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    input[type=text]:focus, input[type=url]:focus, select:focus {
+      border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn {
+      padding: 10px 14px; background: var(--primary); color: white; border: 1px solid rgba(255,255,255,0.06);
+      cursor: pointer; border-radius: 8px; transition: background .15s, transform .02s;
+    }
+    .btn:hover { background: var(--primary-hover); }
+    .btn:active { transform: translateY(1px); }
+    .btn.secondary { background: var(--secondary); }
+    .btn.secondary:hover { background: var(--secondary-hover); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .muted { color: var(--muted); }
+    pre {
+      background: #0a0f16; color: #d2d8de; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+      height: 280px; overflow: auto; font-size: 12.5px; line-height: 1.35;
+    }
+    .hidden { display: none; }
+    .tag {
+      display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+      background: rgba(139,92,246,0.18); color: #dcd2ff; border: 1px solid rgba(139,92,246,0.35); margin-left: 8px;
+    }
+    .header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="status-bar">
-            <div>
-                <h1 class="m-0">
-                    Rerun 24/7
-                    <span id="status-dot" class="dot offline" title="Offline"></span>
-                </h1>
-                <div class="stats mt-1">
-                    <span id="stats-text">Ready to stream</span>
-                </div>
-            </div>
-            <div class="text-end">
-                <div class="hint">
-                    <strong>GPU Support:</strong><br>
-                    NVIDIA<span class="badge bg-success ms-1">NVENC</span>
-                    Intel<span class="badge bg-info ms-1">VAAPI</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="row">
-            <div class="col-md-6">
-                <h4>Stream Destinations</h4>
-                <div class="hint mb-3">Configure streaming URLs and keys for multiple platforms</div>
-                
-                <div id="destinations-container">
-                    <!-- Dynamic destinations will be populated here -->
-                </div>
-                
-                <div class="d-flex gap-2 mb-4">
-                    <button type="button" class="btn-add-destination" id="add-destination-btn" title="Add another destination">
-                        +
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="saveDestinations()">
-                        <i class="bi bi-save"></i> Save Destinations
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="resetDestinations()">
-                        <i class="bi bi-arrow-clockwise"></i> Reset to Defaults
-                    </button>
-                </div>
-            </div>
-            
-            <div class="col-md-6">
-                <h4>Stream Configuration</h4>
-                
-                <form id="stream-form" class="mt-3">
-                    <div class="row g-3">
-                        <!-- Bitrate -->
-                        <div class="col-md-6">
-                            <label for="bitrate" class="form-label">Video Bitrate</label>
-                            <input 
-                                type="text" 
-                                class="form-control" 
-                                id="bitrate" 
-                                name="bitrate"
-                                placeholder="2500k" 
-                                value="2500k"
-                                pattern="^\d+k?$"
-                                title="Enter bitrate like '2500k' or '2500'"
-                            >
-                            <div class="hint">Format: 2500k or 2500</div>
-                        </div>
-                        <!-- Input Type -->
-                        <div class="col-md-6">
-                            <label for="input_type" class="form-label">Input Source</label>
-                            <select class="form-select" id="input_type" name="input_type">
-                                <option value="file" selected>Local Video File</option>
-                                <option value="srt">SRT / RTMP Stream</option>
-                            </select>
-                        </div>
-                        <!-- Video Selection (for file input) -->
-                        <div class="col-12" id="video-selection">
-                            <label for="video" class="form-label">Select Video File</label>
-                            <select class="form-select" id="video" name="video">
-                                <option value="">Loading videos...</option>
-                            </select>
-                            <div class="hint">Upload videos to the configured video folder</div>
-                        </div>
-                        <!-- SRT URL (for stream input) -->
-                        <div class="col-12" id="srt-input" style="display:none;">
-                            <label for="srt_url" class="form-label">SRT / RTMP Input URL</label>
-                            <input 
-                                type="url" 
-                                class="form-control" 
-                                id="srt_url" 
-                                name="srt_url"
-                                placeholder="srt://host:port?streamid=publish/live/stream_key"
-                                value=""
-                            >
-                            <div class="hint">Enter the full SRT or RTMP input URL</div>
-                        </div>
-                        <!-- Encoder -->
-                        <div class="col-md-6">
-                            <label for="encoder" class="form-label">Video Encoder</label>
-                            <select class="form-select" id="encoder" name="encoder">
-                                <option value="libx264" selected>CPU (x264)</option>
-                                <option value="h264_nvenc">NVIDIA GPU (NVENC)</option>
-                                <option value="h264_vaapi">Intel iGPU (VAAPI)</option>
-                            </select>
-                            <div class="hint mt-1" id="encoder-help">CPU encoding works on all systems</div>
-                        </div>
-                        <!-- Preset -->
-                        <div class="col-md-6">
-                            <label for="preset" class="form-label">Encoder Preset</label>
-                            <select class="form-select" id="preset" name="preset">
-                                <!-- Options will be populated by JavaScript -->
-                            </select>
-                            <div class="hint mt-1" id="preset-help">Preset affects encoding speed vs quality</div>
-                        </div>
-                        <!-- Shuffle Mode -->
-                        <div class="col-12">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="shuffle_mode" name="shuffle_mode" checked>
-                                <label class="form-check-label" for="shuffle_mode">Shuffle Playlist</label>
-                            </div>
-                            <div class="hint">Randomly play videos from your library</div>
-                        </div>
-                    </div>
-                    <!-- Control Buttons -->
-                    <div class="d-flex gap-2 mt-4">
-                        <button id="toggle-btn" type="button" class="btn btn-start px-4">
-                            <span id="toggle-text">Start Stream</span>
-                        </button>
-                        <button id="skip-btn" type="button" class="btn btn-outline-warning" disabled>
-                            <i class="bi bi-skip-forward"></i> Skip Video
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" onclick="clearLogs()">
-                            <i class="bi bi-trash"></i> Clear Logs
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-        <!-- Error/Success Messages -->
-        <div id="messages"></div>
-        <!-- Logs -->
-        <div class="logs" id="logs"></div>
+  <div class="header">
+    <h1>Rerun 24/7 Streaming <span class="tag" id="encTag">Ready</span></h1>
+    <div class="status">
+      <span id="statusText" class="muted">Stopped</span>
+      <span id="statusDot" class="dot" title="Stopped"></span>
     </div>
+  </div>
+  <small class="muted">GPU Support: NVIDIA (NVENC), Intel (VAAPI); CPU encoding works everywhere.</small>
 
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            // DOM elements
-            const form = document.getElementById("stream-form");
-            const inputType = document.getElementById("input_type");
-            const videoSelection = document.getElementById("video-selection");
-            const srtInput = document.getElementById("srt-input");
-            const encoder = document.getElementById("encoder");
-            const preset = document.getElementById("preset");
-            const encoderHelp = document.getElementById("encoder-help");
-            const presetHelp = document.getElementById("preset-help");
-            const statusDot = document.getElementById("status-dot");
-            const statsText = document.getElementById("stats-text");
-            const logsEl = document.getElementById("logs");
-            const toggleBtn = document.getElementById("toggle-btn");
-            const toggleText = document.getElementById("toggle-text");
-            const skipBtn = document.getElementById("skip-btn");
-            const messagesDiv = document.getElementById("messages");
-            const destinationsContainer = document.getElementById("destinations-container");
-            const addDestinationBtn = document.getElementById("add-destination-btn");
-            const shuffleMode = document.getElementById("shuffle_mode");
+  <!-- embed saved config from backend -->
+  <script id="saved-config" type="application/json">
+    {{ form|tojson }}
+  </script>
 
-            // Dynamic destinations management
-            let destinations = [];
-            let nextId = 5;
+  <form id="control-form">
+    <div class="grid">
+      <div class="card">
+        <label>Stream Key / Output URL</label>
+        <input type="text" id="stream_key" name="stream_key" placeholder="rtmp://server/app/streamKey" required />
 
-            // Preset configurations
-            const PRESET_OPTIONS = {
-                "libx264": {
-                    "ultrafast": "Ultra Fast (lowest quality)",
-                    "superfast": "Super Fast",
-                    "veryfast": "Very Fast",
-                    "faster": "Faster",
-                    "fast": "Fast",
-                    "medium": "Medium (balanced)",
-                    "slow": "Slow (better quality)",
-                    "slower": "Slower",
-                    "veryslow": "Very Slow (best quality)"
-                },
-                "h264_nvenc": {
-                    "p1": "P1 (fastest)",
-                    "p2": "P2",
-                    "p3": "P3",
-                    "p4": "P4 (balanced)",
-                    "p5": "P5",
-                    "p6": "P6",
-                    "p7": "P7 (best quality)",
-                    "ll": "Low Latency",
-                    "llhp": "LL High Performance",
-                    "llhq": "LL High Quality"
-                },
-                "h264_vaapi": {
-                    "medium": "Medium (default)",
-                    "fast": "Fast",
-                    "slow": "Slow"
-                }
-            };
+        <label>Video Bitrate</label>
+        <input type="text" id="bitrate" name="bitrate" value="2500k" />
 
-            const DEFAULT_PRESETS = {
-                "libx264": "medium",
-                "h264_nvenc": "p4",
-                "h264_vaapi": "medium"
-            };
+        <label>Input Source</label>
+        <div class="row">
+          <label><input type="radio" name="input_type" value="file" checked /> Local Video File</label>
+          <label><input type="radio" name="input_type" value="srt" /> SRT / RTMP Stream</label>
+        </div>
 
-            const ENCODER_HELP = {
-                "libx264": "CPU encoding: slower presets = better quality",
-                "h264_nvenc": "NVIDIA GPU encoding: P1-P7 for speed→quality, LL* for low latency",
-                "h264_vaapi": "Intel GPU encoding: efficient for streaming"
-            };
+        <div id="fileInputs">
+          <label>Category</label>
+          <select id="category" name="category"></select>
 
-            // Load destinations from backend on page load
-            async function loadDestinations() {
-                try {
-                    const response = await fetch("/destinations");
-                    const data = await response.json();
-                    
-                    if (data.destinations && data.destinations.length > 0) {
-                        destinations = data.destinations.map(dest => ({
-                            id: dest.id,
-                            url: dest.url || "",
-                            key: dest.key || "",
-                            enabled: dest.enabled || false
-                        }));
-                    } else {
-                        // Initialize with default destinations if none exist
-                        destinations = [
-                            { id: 1, url: "rtmp://live.twitch.tv/app/", key: "", enabled: false },
-                            { id: 2, url: "rtmp://a.rtmp.youtube.com/live2/", key: "", enabled: false },
-                            { id: 3, url: "rtmps://live-api-s.facebook.com:443/rtmp/", key: "", enabled: false },
-                            { id: 4, url: "rtmp://rtmp.kick.com:1935/live/", key: "", enabled: false }
-                        ];
-                    }
-                    renderDestinations();
-                } catch (error) {
-                    console.error("Failed to load destinations:", error);
-                    // Initialize with defaults if loading fails
-                    destinations = [
-                        { id: 1, url: "rtmp://live.twitch.tv/app/", key: "", enabled: false },
-                        { id: 2, url: "rtmp://a.rtmp.youtube.com/live2/", key: "", enabled: false },
-                        { id: 3, url: "rtmps://live-api-s.facebook.com:443/rtmp/", key: "", enabled: false },
-                        { id: 4, url: "rtmp://rtmp.kick.com:1935/live/", key: "", enabled: false }
-                    ];
-                    renderDestinations();
-                }
-            }
+          <label>Shuffle Playlist</label>
+          <label class="row" style="gap:8px;">
+            <input type="checkbox" id="shuffle" name="shuffle" />
+            <span class="muted">Shuffle across category</span>
+          </label>
 
-            // Load videos from backend
-            async function loadVideos() {
-                try {
-                    const response = await fetch("/videos");
-                    const data = await response.json();
-                    const videoSelect = document.getElementById("video");
-                    
-                    videoSelect.innerHTML = "";
-                    
-                    if (data.videos && data.videos.length > 0) {
-                        data.videos.forEach(video => {
-                            const option = document.createElement("option");
-                            option.value = video;
-                            option.textContent = video;
-                            videoSelect.appendChild(option);
-                        });
-                    } else {
-                        const option = document.createElement("option");
-                        option.value = "";
-                        option.textContent = "No videos found";
-                        videoSelect.appendChild(option);
-                    }
-                } catch (error) {
-                    console.error("Failed to load videos:", error);
-                    const videoSelect = document.getElementById("video");
-                    videoSelect.innerHTML = '<option value="">Error loading videos</option>';
-                }
-            }
+          <label>Select Video</label>
+          <select id="video" name="video"></select>
+        </div>
 
-            // Destination management functions
-            function renderDestinations() {
-                destinationsContainer.innerHTML = '';
-                
-                destinations.forEach((dest, index) => {
-                    const destDiv = document.createElement('div');
-                    destDiv.className = 'destination-row';
-                    destDiv.dataset.id = dest.id;
-                    
-                    destDiv.innerHTML = `
-                        <div class="destination-counter">Destination ${index + 1}</div>
-                        ${destinations.length > 1 ? '<button type="button" class="btn-remove-destination" onclick="removeDestination(' + index + ')">×</button>' : ''}
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input destination-enabled" type="checkbox" 
-                                   id="dest-${dest.id}-enabled" ${dest.enabled ? 'checked' : ''}>
-                            <label class="form-check-label" for="dest-${dest.id}-enabled">Enable this destination</label>
-                        </div>
-                        <div class="destination-inputs">
-                            <input type="url" class="form-control destination-url" 
-                                   placeholder="rtmp://live.platform.com/app/" 
-                                   value="${dest.url}">
-                            <input type="text" class="form-control destination-key" 
-                                   placeholder="Stream key" 
-                                   value="${dest.key}">
-                        </div>
-                    `;
-                    
-                    destinationsContainer.appendChild(destDiv);
-                    
-                    // Add event listeners
-                    const enabledCheckbox = destDiv.querySelector('.destination-enabled');
-                    const urlInput = destDiv.querySelector('.destination-url');
-                    const keyInput = destDiv.querySelector('.destination-key');
-                    
-                    enabledCheckbox.addEventListener('change', (e) => {
-                        destinations[index].enabled = e.target.checked;
-                    });
-                    
-                    urlInput.addEventListener('input', (e) => {
-                        destinations[index].url = e.target.value;
-                    });
-                    
-                    keyInput.addEventListener('input', (e) => {
-                        destinations[index].key = e.target.value;
-                    });
-                });
-            }
+        <div id="srtInputs" class="hidden">
+          <label>SRT / RTMP Input URL</label>
+          <input type="url" id="srt_url" name="srt_url" placeholder="srt://host:port?mode=listener" />
+        </div>
+      </div>
 
-            function addDestination() {
-                destinations.push({
-                    id: nextId++,
-                    url: "",
-                    key: "",
-                    enabled: false
-                });
-                renderDestinations();
-            }
+      <div class="card">
+        <label>Video Encoder</label>
+        <select id="encoder" name="encoder">
+          <option value="libx264">CPU (x264)</option>
+          <option value="h264_nvenc">NVIDIA GPU (NVENC)</option>
+          <option value="h264_vaapi">Intel iGPU (VAAPI)</option>
+        </select>
 
-            function removeDestination(index) {
-                if (destinations.length > 1) {
-                    destinations.splice(index, 1);
-                    renderDestinations();
-                }
-            }
+        <label>Encoder Preset</label>
+        <select id="preset" name="preset"></select>
 
-            // Make removeDestination globally available
-            window.removeDestination = removeDestination;
+        <div class="row" style="margin-top: 12px;">
+          <button class="btn" id="startStopBtn" type="button">Start Stream</button>
+          <button class="btn secondary" id="clearLogsBtn" type="button">Clear Logs</button>
+          <button class="btn secondary" id="rescanBtn" type="button">Rescan</button>
+        </div>
+      </div>
 
-            // Save destinations
-            window.saveDestinations = async function() {
-                try {
-                    const response = await fetch("/destinations", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify(destinations.map((dest, index) => ({
-                            id: dest.id.toString(),
-                            name: `Destination ${index + 1}`,
-                            url: dest.url,
-                            key: dest.key,
-                            enabled: dest.enabled,
-                            type: dest.url.includes('rtmps://') ? 'rtmps' : 'rtmp',
-                            status: dest.enabled && dest.key ? 'active' : 'inactive'
-                        })))
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        showMessage(data.error || "Failed to save destinations", "danger");
-                    } else {
-                        showMessage("Destinations saved successfully", "success");
-                    }
-                } catch (error) {
-                    showMessage("Network error: " + error.message, "danger");
-                }
-            };
+      <div class="card">
+        <label>Logs</label>
+        <pre id="logs"></pre>
+      </div>
+    </div>
+  </form>
 
-            // Reset destinations
-            window.resetDestinations = function() {
-                if (confirm("Reset all destinations to default settings?")) {
-                    destinations = [
-                        { id: 1, url: "rtmp://live.twitch.tv/app/", key: "", enabled: false },
-                        { id: 2, url: "rtmp://a.rtmp.youtube.com/live2/", key: "", enabled: false },
-                        { id: 3, url: "rtmps://live-api-s.facebook.com:443/rtmp/", key: "", enabled: false },
-                        { id: 4, url: "rtmp://rtmp.kick.com:1935/live/", key: "", enabled: false }
-                    ];
-                    nextId = 5;
-                    renderDestinations();
-                    showMessage("Destinations reset to defaults", "success");
-                }
-            };
+  <script>
+    // Human-readable preset labels mapped to exact values the backend expects
+    const presetsByEncoder = {
+      // libx264 presets (single clear "Default" only)
+      libx264: [
+        { value: "ultrafast", label: "Lowest Quality (Fastest)" },
+        { value: "superfast", label: "Very Fast" },
+        { value: "veryfast",  label: "Faster" },
+        { value: "faster",    label: "Fast" },
+        { value: "fast",      label: "Fast (lower quality)" },
+        { value: "medium",    label: "Default" },
+        { value: "slow",      label: "Higher Quality" },
+        { value: "slower",    label: "High Quality" },
+        { value: "veryslow",  label: "Highest Quality (Slowest)" },
+        { value: "placebo",   label: "Max Quality (Very Slow)" },
+      ],
+      // NVIDIA NVENC p1..p7
+      h264_nvenc: [
+        { value: "p1", label: "Lowest Quality (Fastest)" },
+        { value: "p2", label: "Very Fast" },
+        { value: "p3", label: "Fast" },
+        { value: "p4", label: "Default" },
+        { value: "p5", label: "Quality" },
+        { value: "p6", label: "High Quality" },
+        { value: "p7", label: "Highest Quality (Slowest)" },
+      ],
+      // VAAPI compression_level 1..7
+      h264_vaapi: [
+        { value: "1", label: "Lowest Quality (Fastest)" },
+        { value: "2", label: "Very Fast" },
+        { value: "3", label: "Fast" },
+        { value: "4", label: "Default (Balanced)" },
+        { value: "5", label: "Quality" },
+        { value: "6", label: "High Quality" },
+        { value: "7", label: "Highest Quality (Slowest)" },
+      ],
+    };
 
-            // Utility functions
-            function showMessage(message, type = 'danger') {
-                const alertDiv = document.createElement('div');
-                alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-                alertDiv.innerHTML = `
-                    ${message}
-                    <button type="button" class="btn-close" aria-label="Close" onclick="this.parentElement.remove()"></button>
-                `;
-                messagesDiv.appendChild(alertDiv);
-                setTimeout(() => {
-                    if (alertDiv.parentNode) {
-                        alertDiv.remove();
-                    }
-                }, 5000);
-            }
+    // Parse saved config embedded by backend
+    const saved = (() => {
+      try { return JSON.parse(document.getElementById('saved-config')?.textContent || '{}'); }
+      catch { return {}; }
+    })();
 
-            function clearMessages() {
-                messagesDiv.innerHTML = '';
-            }
+    function populatePresets() {
+      const enc = document.getElementById('encoder').value;
+      const presetEl = document.getElementById('preset');
+      const current = presetEl.value;
+      presetEl.innerHTML = "";
+      (presetsByEncoder[enc] || []).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.value;
+        opt.textContent = p.label;
+        presetEl.appendChild(opt);
+      });
+      // Defaults per encoder
+      let defaultVal = 'medium';
+      if (enc === 'h264_nvenc') defaultVal = 'p5';
+      if (enc === 'h264_vaapi') defaultVal = '4';
 
-            function validateForm() {
-                const bitrate = document.getElementById('bitrate').value.trim();
-                const inputTypeVal = inputType.value;
-                const srtUrl = document.getElementById('srt_url').value.trim();
+      // Apply saved or fallback default
+      const desired = saved.preset && [...presetEl.options].some(o => o.value === saved.preset)
+        ? saved.preset : defaultVal;
+      presetEl.value = desired;
 
-                // Check if at least one destination is enabled
-                const enabledDestinations = destinations.filter(dest => dest.enabled && dest.url && dest.key);
-                if (enabledDestinations.length === 0) {
-                    showMessage('At least one destination must be enabled with both URL and stream key');
-                    return false;
-                }
+      // Update tag to show encoder + label
+      const tag = document.getElementById('encTag');
+      const label = [...presetEl.options].find(o => o.value === presetEl.value)?.textContent || '';
+      tag.textContent = `${enc} · ${label}`;
+    }
 
-                if (!bitrate.match(/^\d+k?$/)) {
-                    showMessage('Invalid bitrate format. Use format like "2500k" or "2500"');
-                    return false;
-                }
+    function applyStatus(s) {
+      const btn = document.getElementById('startStopBtn');
+      const dot = document.getElementById('statusDot');
+      const txt = document.getElementById('statusText');
+      const logs = document.getElementById('logs');
 
-                if (inputTypeVal === 'srt' && !srtUrl) {
-                    showMessage('SRT/RTMP input URL is required when using stream input');
-                    return false;
-                }
+      const running = !!(s && s.running);
+      btn.textContent = running ? 'Stop Stream' : 'Start Stream';
+      btn.dataset.running = running ? '1' : '0';
 
-                return true;
-            }
+      dot.style.backgroundColor = running ? 'var(--success)' : 'var(--danger)';
+      dot.style.boxShadow = running
+        ? '0 0 0 3px rgba(34,197,94,0.18)'
+        : '0 0 0 3px rgba(239,68,68,0.15)';
+      dot.title = running ? 'Streaming' : 'Stopped';
 
-            function toggleInputDisplay() {
-                if (inputType.value === "file") {
-                    videoSelection.style.display = "block";
-                    srtInput.style.display = "none";
-                } else {
-                    videoSelection.style.display = "none";
-                    srtInput.style.display = "block";
-                }
-            }
+      const restarts = s && typeof s.restarts === 'number' ? s.restarts : 0;
+      txt.textContent = running ? `Streaming (restarts: ${restarts})` : 'Stopped';
 
-            function populatePresets() {
-                const encoderVal = encoder.value;
-                const options = PRESET_OPTIONS[encoderVal] || {};
-                
-                preset.innerHTML = "";
-                
-                Object.entries(options).forEach(([value, label]) => {
-                    const option = document.createElement("option");
-                    option.value = value;
-                    option.textContent = label;
-                    preset.appendChild(option);
-                });
+      if (logs && s && s.tail) {
+        logs.textContent = s.tail.join('\n');
+        logs.scrollTop = logs.scrollHeight;
+      }
+    }
 
-                const defaultPreset = DEFAULT_PRESETS[encoderVal] || "medium";
-                preset.value = defaultPreset;
+    async function pollStatus() {
+      try {
+        const r = await fetch('/status', { cache: 'no-store' });
+        const s = await r.json();
+        applyStatus(s);
+      } catch (e) {}
+    }
 
-                encoderHelp.textContent = ENCODER_HELP[encoderVal] || "";
-                presetHelp.textContent = `Selected: ${options[preset.value] || preset.value}`;
-            }
-
-            function updateStats(data) {
-                if (data.running) {
-                    const uptime = data.uptime ? Math.floor(data.uptime / 60) : 0;
-                    const restarts = data.restarts || 0;
-                    const videoInfo = data.current_video ? ` • Now playing: ${data.current_video}` : '';
-                    statsText.textContent = `Streaming to ${data.enabled_destinations} platforms • ${uptime}m uptime • ${restarts} restarts${videoInfo}`;
-                    skipBtn.disabled = false;
-                } else {
-                    const videoCount = data.video_count || 0;
-                    const enabledCount = destinations.filter(d => d.enabled).length;
-                    statsText.textContent = `Ready to stream • ${videoCount} videos available • ${enabledCount} destinations enabled`;
-                    skipBtn.disabled = true;
-                }
-                shuffleMode.checked = data.shuffle_mode || false;
-            }
-
-            // API functions
-            async function pollStatus() {
-                try {
-                    const response = await fetch("/status");
-                    const data = await response.json();
-                    
-                    updateStats(data);
-                    
-                    if (data.running) {
-                        statusDot.classList.remove("offline");
-                        statusDot.classList.add("online");
-                        statusDot.title = "Streaming";
-                        toggleText.textContent = "Stop Stream";
-                        toggleBtn.classList.remove("btn-start");
-                        toggleBtn.classList.add("btn-stop");
-                    } else {
-                        statusDot.classList.remove("online");
-                        statusDot.classList.add("offline");
-                        statusDot.title = "Offline";
-                        toggleText.textContent = "Start Stream";
-                        toggleBtn.classList.remove("btn-stop");
-                        toggleBtn.classList.add("btn-start");
-                    }
-                } catch (error) {
-                    console.error("Failed to get status:", error);
-                }
-            }
-
-            async function pollLogs() {
-                try {
-                    const response = await fetch("/logs");
-                    const data = await response.json();
-                    const lines = data.lines || [];
-                    
-                    logsEl.textContent = lines.join("\n");
-                    logsEl.scrollTop = logsEl.scrollHeight;
-                } catch (error) {
-                    console.error("Failed to get logs:", error);
-                }
-            }
-
-            async function skipVideo() {
-                try {
-                    const response = await fetch("/skip", {
-                        method: "POST"
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        showMessage(data.error || "Failed to skip video", "danger");
-                    } else {
-                        showMessage("Skipping to next video", "success");
-                        await pollStatus();
-                    }
-                } catch (error) {
-                    showMessage("Network error: " + error.message, "danger");
-                }
-            }
-
-            async function toggleShuffle() {
-                try {
-                    const response = await fetch("/shuffle", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({ shuffle: shuffleMode.checked })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        showMessage(data.error || "Failed to toggle shuffle", "danger");
-                        shuffleMode.checked = !shuffleMode.checked;
-                    } else {
-                        showMessage(`Shuffle mode ${data.shuffle ? 'enabled' : 'disabled'}`, "success");
-                    }
-                } catch (error) {
-                    showMessage("Network error: " + error.message, "danger");
-                    shuffleMode.checked = !shuffleMode.checked;
-                }
-            }
-
-            // Event listeners
-            addDestinationBtn.addEventListener("click", addDestination);
-            
-            toggleBtn.addEventListener("click", async function() {
-                if (!validateForm()) return;
-                
-                clearMessages();
-                try {
-                    toggleBtn.disabled = true;
-                    
-                    const formData = new FormData(form);
-                    
-                    // Add destination data to form
-                    destinations.forEach((dest, index) => {
-                        formData.append(`dest_${dest.id}_enabled`, dest.enabled ? 'on' : '');
-                        formData.append(`dest_${dest.id}_key`, dest.key);
-                    });
-                    
-                    const response = await fetch("/toggle", {
-                        method: "POST",
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        showMessage(data.error || "Failed to toggle stream", "danger");
-                    } else {
-                        showMessage(data.message || "Stream toggled", "success");
-                    }
-                    
-                    await pollStatus();
-                    await pollLogs();
-                    
-                } catch (error) {
-                    showMessage("Network error: " + error.message, "danger");
-                } finally {
-                    toggleBtn.disabled = false;
-                }
-            });
-
-            skipBtn.addEventListener("click", skipVideo);
-            shuffleMode.addEventListener("change", toggleShuffle);
-            encoder.addEventListener("change", populatePresets);
-            inputType.addEventListener("change", toggleInputDisplay);
-            
-            preset.addEventListener("change", function() {
-                const options = PRESET_OPTIONS[encoder.value] || {};
-                presetHelp.textContent = `Selected: ${options[preset.value] || preset.value}`;
-            });
-
-            // Global functions
-            window.clearLogs = function() {
-                logsEl.textContent = "";
-            };
-
-            // Initialize everything
-            loadDestinations(); // Load saved destinations from backend
-            loadVideos(); // Load video list from backend
-            toggleInputDisplay();
-            populatePresets();
-            
-            // Refresh videos periodically
-            setInterval(loadVideos, 10000); // Refresh every 10 seconds
-            
-            // Start polling
-            pollStatus();
-            pollLogs();
-            setInterval(pollStatus, 3000);
-            setInterval(pollLogs, 2000);
+    async function loadCategories(selected) {
+      try {
+        const r = await fetch('/categories');
+        const data = await r.json();
+        const sel = document.getElementById('category');
+        sel.innerHTML = '';
+        (data.categories || []).forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c; opt.textContent = c; sel.appendChild(opt);
         });
-    </script>
+        if (selected && [...sel.options].some(o => o.value === selected)) sel.value = selected;
+      } catch (e) {}
+    }
+
+    async function loadVideos(category, selected) {
+      try {
+        const r = await fetch(`/videos?category=${encodeURIComponent(category)}`);
+        const data = await r.json();
+        const sel = document.getElementById('video');
+        sel.innerHTML = '';
+        (data.videos || []).forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v; sel.appendChild(opt);
+        });
+        if (selected && [...sel.options].some(o => o.value === selected)) sel.value = selected;
+      } catch (e) {}
+    }
+
+    function updateInputVisibility() {
+      const type = document.querySelector('input[name="input_type"]:checked').value;
+      document.getElementById('fileInputs').classList.toggle('hidden', type !== 'file');
+      document.getElementById('srtInputs').classList.toggle('hidden', type !== 'srt');
+    }
+
+    function applySavedBasics() {
+      if (saved.stream_key) document.getElementById('stream_key').value = saved.stream_key;
+      if (saved.bitrate) document.getElementById('bitrate').value = saved.bitrate;
+
+      const it = (saved.input_type || 'file').toLowerCase();
+      const sel = document.querySelector(`input[name="input_type"][value="${it}"]`);
+      if (sel) sel.checked = true;
+
+      const sh = (saved.shuffle || '').toString().toLowerCase();
+      document.getElementById('shuffle').checked = ['on','true','1','yes'].includes(sh);
+
+      if (saved.encoder) document.getElementById('encoder').value = saved.encoder;
+      populatePresets();
+    }
+
+    async function toggleStream() {
+      const btn = document.getElementById('startStopBtn');
+      const running = btn.dataset.running === '1';
+      let body = null;
+
+      if (!running) {
+        const fd = new FormData(document.getElementById('control-form'));
+        fd.set('shuffle', document.getElementById('shuffle').checked ? 'on' : 'off');
+        body = fd;
+      } else {
+        body = new FormData();
+      }
+
+      try {
+        const r = await fetch('/toggle', { method: 'POST', body });
+        await r.json().catch(() => ({}));
+      } catch (e) {}
+      setTimeout(pollStatus, 300);
+    }
+
+    window.addEventListener('load', async () => {
+      applySavedBasics();
+      updateInputVisibility();
+
+      await loadCategories(saved.category || '');
+      const cat = document.getElementById('category').value;
+      if (cat) await loadVideos(cat, saved.video || '');
+
+      document.getElementById('encoder').addEventListener('change', populatePresets);
+      document.getElementById('preset').addEventListener('change', populatePresets);
+      document.getElementById('category').addEventListener('change', async (e) => {
+        await loadVideos(e.target.value, '');
+      });
+      document.querySelectorAll('input[name="input_type"]').forEach(r => {
+        r.addEventListener('change', updateInputVisibility);
+      });
+      document.getElementById('startStopBtn').addEventListener('click', toggleStream);
+      document.getElementById('clearLogsBtn').addEventListener('click', async () => {
+        try { await fetch('/logs/clear', { method: 'POST' }); } catch (e) {}
+        setTimeout(pollStatus, 200);
+      });
+      document.getElementById('rescanBtn').addEventListener('click', async () => {
+        try { await fetch('/rescan', { method: 'POST' }); } catch (e) {}
+        await loadCategories(saved.category || '');
+        const cat2 = document.getElementById('category').value;
+        if (cat2) await loadVideos(cat2, saved.video || '');
+      });
+
+      setInterval(pollStatus, 2000);
+      await pollStatus();
+    });
+  </script>
 </body>
 </html>
